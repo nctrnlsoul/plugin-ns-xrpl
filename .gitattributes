@@ -1,0 +1,30 @@
+# Line endings are a topology assumption, and this repo got it wrong once.
+#
+# MEASURED after the first commit: the stored blobs are pure LF (git normalised
+# correctly on the way in), but `core.autocrlf=true` is set globally in
+# C:/Program Files/Git/etc/gitconfig, so a fresh clone on Windows CHECKS OUT
+# CRLF. biome.json pins `lineEnding: "lf"`. Result: `bun run lint:check` gave
+# 25 errors on a clean clone, which means the pre-commit gate was green for the
+# author and RED for anyone else who cloned it.
+#
+# That is the _system/CHANGE_GATE "topology" field: state what the code assumes
+# about its environment, and check that the thing creating that environment
+# agrees. The working tree agreed. A clone did not.
+#
+# `text=auto eol=lf` normalises to LF in the repository AND forces LF on
+# checkout on every platform, so the gate behaves identically everywhere
+# regardless of anyone's autocrlf setting.
+* text=auto eol=lf
+
+# The pre-commit hook is executed by sh. CRLF in a shell script is a syntax
+# error on some shells, so this one is not negotiable.
+.githooks/* text eol=lf
+*.sh text eol=lf
+
+# Never transform these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
