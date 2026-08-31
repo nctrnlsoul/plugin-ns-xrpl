@@ -1,0 +1,20 @@
+# Secrets. This package has none today and this line exists so that stays true
+# if that ever changes. It must be here BEFORE the first commit, not after.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+node_modules/
+dist/
+*.tsbuildinfo
+.tsbuildinfo
+
+# Scaffold leftovers
+.vite/
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db

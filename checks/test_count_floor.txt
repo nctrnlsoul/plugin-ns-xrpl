@@ -1,0 +1,10 @@
+183
+# The number of tests that must exist. Lowering this is allowed and has to be
+# deliberate, which is the whole point: a deletion is invisible when an addition
+# lands in the same edit.
+#
+# HIGHWATER: a careless whole-tail replacement silently deleted FOURTEEN tests,
+# including every rate-limiter guard, while four new tests landed alongside and
+# kept the total looking healthy. The suite reported 99 passing. Nothing noticed.
+#
+# If you lower this, say why in the commit message.

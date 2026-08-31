@@ -1,0 +1,18 @@
+#!/bin/sh
+# The only part of this gate that runs without being asked.
+#
+# Install it once:
+#     git config core.hooksPath .githooks
+#
+# check.ts reports whether that has actually been done, because HIGHWATER
+# shipped a README and a blog post both claiming "runs on a pre-commit hook" for
+# a hook that had never executed once. Installing it is a manual step and
+# nothing verified it.
+#
+# To bypass in a genuine emergency: git commit --no-verify. Doing that silently
+# is the thing this exists to stop, so say so in the commit message.
+
+set -e
+
+echo "pre-commit: running the development gate"
+bun run "$(git rev-parse --show-toplevel)/check.ts"

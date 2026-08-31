@@ -1,0 +1,30 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		// Without rootDir, tsc infers it from the input set and emits to
+		// dist/src/index.d.ts, while package.json declares dist/index.d.ts. The
+		// build succeeds, the tarball looks full, and every consumer gets no
+		// types at all. Caught by reading the `npm pack` file list rather than
+		// by trusting the build's own success message.
+		"rootDir": "./src",
+		"sourceMap": true,
+		"inlineSources": true,
+		"declaration": true,
+		// The maps would point at source files the tarball does not carry.
+		"declarationMap": false,
+		// composite forces a .tsbuildinfo, which landed in dist/ and shipped as
+		// 152.9 kB of build metadata: over half the unpacked package.
+		"composite": false,
+		"incremental": false,
+		"noEmit": false
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": [
+		"node_modules",
+		"dist",
+		"**/*.test.ts",
+		"**/*.spec.ts",
+		"src/__tests__/**"
+	]
+}
