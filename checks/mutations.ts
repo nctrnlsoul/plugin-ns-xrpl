@@ -967,6 +967,78 @@ const MUTATIONS: Mutation[] = [
       "  return drifted.length === 0 ? null : describeStaleSentinel(state.sentinel, drifted, path);",
     why: "the composed guard reading as an all clear. The property was asserted on describeStaleSentinel and not on staleSentinelRefusal, which is the function both scripts actually call",
   },
+
+  // -------------------------------------------------------------------------
+  // The publish workflow. npm attaches a provenance attestation only when four
+  // things hold, and it does not fail loudly on all four, so a publish with no
+  // attestation looks exactly like one with a good attestation. That is the
+  // same shape as every other entry in this file: a control that reports on its
+  // own behalf.
+  //
+  // Two of these break the workflow in ways that a naive reader would MISS,
+  // which is the point. `id-token-commented-out` leaves every character of the
+  // permission in the file and grants nothing; `provenance-on-the-command-line`
+  // adds a flag that looks like belt and braces and is a second source for one
+  // setting. Both are caught only because the test reads the file with comments
+  // stripped and reads the parsed run commands rather than the raw text.
+  // -------------------------------------------------------------------------
+  {
+    id: "workflow-id-token-downgraded",
+    file: ".github/workflows/publish.yml",
+    find: "  id-token: write",
+    replace: "  id-token: read",
+    why: "no OIDC token to sign with, so npm publishes successfully and silently attaches no attestation",
+  },
+  {
+    id: "workflow-id-token-commented-out",
+    file: ".github/workflows/publish.yml",
+    find: "  id-token: write",
+    replace: "  # id-token: write",
+    why: "every character of the permission still in the file, granting nothing. A grep for the shape passes; the workflow has no token",
+  },
+  {
+    id: "workflow-self-hosted-runner",
+    file: ".github/workflows/publish.yml",
+    find: "runs-on: ubuntu-latest",
+    replace: "runs-on: self-hosted",
+    why: "provenance requires a CLOUD-HOSTED runner. A self-hosted one runs the whole job green and produces nothing",
+  },
+  {
+    id: "workflow-verify-after-publish",
+    file: ".github/workflows/publish.yml",
+    find: "      - name: Verify\n        run: bun run verify\n\n      - name: Publish\n        run: npm publish --access public\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+    replace:
+      "      - name: Publish\n        run: npm publish --access public\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}\n\n      - name: Verify\n        run: bun run verify",
+    why: "both steps present, both green, and the gate now runs AFTER the one-way door. This is the ordering a check anchored on text position cannot see, because the file discusses publishing above the verify step",
+  },
+  {
+    id: "workflow-verify-step-removed",
+    file: ".github/workflows/publish.yml",
+    find: "      - name: Verify\n        run: bun run verify\n\n",
+    replace: "",
+    why: "the other way the gate stops guarding the door: not reordered, gone. prepublishOnly would still fire, so nothing in the workflow output would look wrong",
+  },
+  {
+    id: "workflow-provenance-on-the-command-line",
+    file: ".github/workflows/publish.yml",
+    find: "        run: npm publish --access public",
+    replace: "        run: npm publish --access public --provenance",
+    why: "two sources for one setting, and it reads as belt and braces. They can disagree, and package.json is the one a consumer can inspect",
+  },
+  {
+    id: "package-repository-case-drifted",
+    file: "package.json",
+    find: '"url": "git+https://github.com/nctrnlsoul/plugin-ns-xrpl.git"',
+    replace: '"url": "git+https://github.com/NctrnlSoul/plugin-ns-xrpl.git"',
+    why: "npm compares repository against the publishing repo CASE-SENSITIVELY. A case-only drift passes every toLowerCase comparison and fails at the registry, after the gate is green and the tag is already pushed",
+  },
+  {
+    id: "package-provenance-disabled",
+    file: "package.json",
+    find: '"provenance": true',
+    replace: '"provenance": false',
+    why: "the workflow is correct in every respect and nothing asks for an attestation. The publish succeeds and the package ships without one",
+  },
 ];
 
 // ---------------------------------------------------------------------------

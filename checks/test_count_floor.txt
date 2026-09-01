@@ -1,4 +1,4 @@
-283
+302
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -121,5 +121,41 @@
 # See also checks/mutation_count_floor.txt, which is this same idea one layer
 # out: this file stops the suite losing tests, that one stops the harness losing
 # the entries that prove the suite can fail.
+#
+# Raised from 283 to 302 by .github/workflows/publish.yml, the first thing this
+# repo has shipped that runs somewhere it cannot watch. npm attaches a provenance
+# attestation only when four things hold and it does not fail loudly on all four,
+# so a publish with NO attestation is indistinguishable from a good one from the
+# outside.
+#
+# Nineteen tests. Four instrument checks first, because a reader of a YAML file
+# that cannot see a planted comment reports whatever it likes: comment stripping
+# proved both ways (a directive inside a comment disappears, a hash inside quotes
+# survives), step order proved to come from declaration order, and a setup proof
+# that the real file parsed into real steps so nothing after it passes vacuously.
+#
+# Then the four npm actually checks, each with the negative control that names
+# how it can be faked: the OIDC permission granted as write, against a version of
+# the file with that line commented out; a cloud-hosted runner, against a
+# self-hosted one; the gate at a lower STEP INDEX than publish; and the flag
+# absent from parsed run commands while publishConfig sets it.
+#
+# Two of those negative controls are proved against the REAL workflow rather than
+# a fixture, and this is the part worth keeping. That file mentions the flag in a
+# comment and discusses the publish step in prose ABOVE the verify step, so an
+# implementation that grepped the raw text would go red on a correct file, and
+# one that compared text offsets would call a correct file misordered. Both traps
+# are asserted to still be present, so a later edit cannot quietly remove them
+# and leave two tests reading stronger than they are. That is commit 3829264's
+# rule applied to a file format it was not written about: a SHAPE appearing in a
+# file is not the thing being configured.
+#
+# The last three are package.json's half of the same check, which no test had
+# ever touched: publishConfig asking for provenance, and repository, homepage and
+# bugs naming one owner and repo in GitHub's canonical CASE. npm compares that
+# case-sensitively, so a case-only drift passes every toLowerCase comparison in
+# the suite and fails at the registry, after the gate is green and the tag is
+# already pushed. The canonical case was measured from the GitHub API, not
+# assumed.
 #
 # If you lower this, say why in the commit message.

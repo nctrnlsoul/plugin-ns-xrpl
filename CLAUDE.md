@@ -104,10 +104,17 @@ completely.
 ## Commands
 
 ```
-bun run verify     typecheck, lint, tests, npm audit, and the gate
+bun run verify     typecheck, lint, tests, bun audit, the gate, then package:check
 bun run check.ts   the development gate on its own
 bun scripts/live-check.mjs   the real network path, run deliberately
 ```
+
+`verify` has SIX steps, not five, and it ends with `package:check`. That is the
+publish-relevant one: it reads the `npm pack` listing of the tree as handed,
+rebuilds `dist`, and reads the listing again, so the tarball is measured rather
+than assumed. `prepublishOnly` runs the whole of `verify`, so all six fire at the
+door on any publish, local or from CI. The audit step is `bun audit`, not
+`npm audit`.
 
 The gate is `check.ts` plus `checks/`. Install the hook once:
 

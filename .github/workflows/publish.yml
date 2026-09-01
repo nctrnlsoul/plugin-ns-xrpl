@@ -1,0 +1,73 @@
+# Publish to npm, with provenance.
+#
+# Provenance is produced HERE or nowhere. npm supports it only from GitHub
+# Actions or GitLab CI, and only on a cloud-hosted runner. A publish from a
+# laptop cannot produce an attestation no matter which flags it passes, and
+# neither can a self-hosted runner.
+#
+# Four things npm needs before it will attach an attestation. It does not fail
+# loudly on all four, which is the reason this file has tests:
+#
+#   1. the OIDC token permission, granted to this workflow
+#   2. a cloud-hosted runner
+#   3. package.json `repository` matching this repo, CASE-SENSITIVELY
+#   4. provenance requested in exactly ONE place
+#
+# On 4: publishConfig in package.json already asks for it, so the publish step
+# below deliberately does not also pass `--provenance` on the command line. Two
+# sources for one setting is a place they can disagree, and the disagreement
+# would be silent.
+#
+# src/__tests__/publish-workflow.test.ts asserts all four against this file, and
+# checks/mutations.ts breaks each one and demands the suite go red. The tests
+# read this file with comments STRIPPED, because a directive written in a
+# comment is not a directive, and prose above a step does not move the step.
+
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The whole gate, in CI, before anything irreversible: typecheck, lint,
+      # the suite, bun audit, then check.ts, whose mutation step reintroduces
+      # one hundred historical defects one at a time and runs the full suite
+      # against each. That step alone takes about seven minutes. It is not hung.
+      #
+      # The publish step below runs prepublishOnly, which runs this same command
+      # a second time at the door, so budget roughly fifteen minutes for the job.
+      # That redundancy is deliberate: this step reports a failure as its own
+      # named step, and prepublishOnly guards a publish however it is invoked.
+      - name: Verify
+        run: bun run verify
+
+      - name: Publish
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,4 +1,4 @@
-100
+108
 # The number of mutation entries that must exist in checks/mutations.ts.
 #
 # Same job as checks/test_count_floor.txt, one layer out. That file stops the
@@ -112,5 +112,31 @@
 # empty recorded sha256. An empty hash can never equal a real one, so every
 # target reads as drifted. It degrades the message rather than failing open,
 # which is the direction that costs a minute rather than a release.
+#
+# Raised from 100 to 108 by the publish workflow, which is the first piece of
+# infrastructure here that runs somewhere this repo cannot watch. npm attaches a
+# provenance attestation only when four things hold, and it does not fail loudly
+# on all four, so a publish that ships with NO attestation looks exactly like one
+# that shipped with a good one. That is this file's usual shape, one layer out:
+# a control that reports on its own behalf.
+#
+# Six over .github/workflows/publish.yml: the OIDC permission downgraded, the
+# same permission COMMENTED OUT with every character still in the file, a
+# self-hosted runner, the gate reordered after the publish step, the gate step
+# deleted outright, and `--provenance` added to the command line where
+# publishConfig already asks for it.
+#
+# Two over package.json, because half of what npm checks is not in the workflow
+# at all: the repository owner drifted by CASE ONLY, which passes every
+# toLowerCase comparison and fails at the registry after the tag is pushed, and
+# publishConfig provenance flipped to false, which leaves a perfectly correct
+# workflow asking for nothing.
+#
+# The two worth naming are the ones a reader skims past. A commented-out
+# permission satisfies any grep for the shape, and a second `--provenance` reads
+# as belt and braces. Both are caught only because the test strips comments and
+# reads PARSED run commands rather than raw text, and the workflow file carries
+# both traps deliberately so those two properties are proved against the real
+# artifact instead of a fixture.
 #
 # If you lower this, say why in the commit message.

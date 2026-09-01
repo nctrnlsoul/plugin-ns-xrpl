@@ -50,6 +50,13 @@ with its own review.
 npm install @northschema/plugin-xrpl
 ```
 
+`@elizaos/core` is a peer dependency and the range is `>=2.0.3-beta.7 <3.0.0-0`.
+Measured 2026-09-01: that range excludes the `latest` dist-tag, which is `1.7.2`,
+so installing this beside stable elizaOS produces an `ERESOLVE` error. It
+resolves on the 2.x beta line, which is the line every runtime finding in
+`CLAUDE.md` was measured against. When 2.x reaches GA that will change, and the
+findings will need re-measuring against whatever the range then admits.
+
 ```ts
 import { xrplPlugin } from "@northschema/plugin-xrpl";
 
@@ -116,11 +123,21 @@ says so when they do rather than presenting one index for both.
 
 ```
 bun install
-bun run verify                # typecheck, lint, tests, npm audit, the gate
+bun run verify                # six steps, listed below
 bun run check.ts              # the development gate on its own
 bun scripts/live-check.mjs    # the real network path
 git config core.hooksPath .githooks
 ```
+
+`verify` runs typecheck, lint, the test suite, `bun audit`, the gate, and then
+`package:check`. That last step is the publish-relevant one: it reads the
+`npm pack` listing of the tree as handed, rebuilds `dist`, and reads the listing
+again, so what would actually ship is measured rather than assumed.
+`prepublishOnly` runs all six, so they fire at the door on any publish.
+
+Releases are published from `.github/workflows/publish.yml` on a `v*` tag.
+npm can attach a provenance attestation only from a cloud-hosted CI runner, so a
+publish from a laptop cannot produce one whatever flags it passes.
 
 Contributions must keep the invariants in `CLAUDE.md` and add a mutation entry
 for any new guard.
