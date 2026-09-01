@@ -85,6 +85,73 @@ describe("the SECOND half of the lookup speaks when it fails", () => {
     expect((r.text ?? "").trim().length).toBeGreaterThan(0);
   });
 
+  // D4, at the seam rather than in the renderer. The provider is the only place
+  // that holds both indices, and it was discarding one of them.
+  it("carries the trust lines' ledger index through to the report", async () => {
+    const provider = createXrplProvider({
+      fetchImpl: fetchByMethod({
+        account_info: ACCOUNT_INFO_OK, // ledger 106661700
+        account_lines: { ...LINES_OK, result: { ...LINES_OK.result, ledger_index: 777777777 } },
+      }) as never,
+    });
+    const text = (await provider.get(rt, msg(`balance of ${ADDR}`), undefined as never)).text ?? "";
+    // F2 audit: these were two toContain calls against the whole report. The
+    // ledger_index line already carries 106661700 and trust_lines_ledger_index
+    // already carries 777777777, so both passed without the mismatch message
+    // naming either number. Anchor each to the line that must carry it.
+    expect(text, "the balance's ledger must still be reported").toMatch(
+      /^ {2}ledger_index: 106661700$/m,
+    );
+    expect(text, "the trust lines' own ledger must reach the report").toMatch(
+      /^ {2}trust_lines_ledger_index: 777777777$/m,
+    );
+    expect(text, "the mismatch line must name BOTH ledgers").toMatch(
+      /^ {2}trust_lines_ledger_mismatch: .*\b106661700\b.*\b777777777\b.*$/m,
+    );
+  });
+
+  it("says nothing about a mismatch when both calls saw the same ledger", async () => {
+    const provider = createXrplProvider({
+      fetchImpl: fetchByMethod({ account_info: ACCOUNT_INFO_OK, account_lines: LINES_OK }) as never,
+    });
+    const text = (await provider.get(rt, msg(`balance of ${ADDR}`), undefined as never)).text ?? "";
+    expect(text).toMatch(/trust_lines_ledger_index: 106661700/);
+    expect(text).not.toMatch(/ledger_mismatch/i);
+    expect(text).not.toMatch(/ledger_spread/i);
+  });
+
+  it("says so when the PAGES of one lookup straddled two ledgers", async () => {
+    // Each page is its own request against ledger_index: validated. Two pages
+    // four seconds apart can see two different ledgers, and the combined list
+    // then belongs to neither.
+    let page = 0;
+    const provider = createXrplProvider({
+      fetchImpl: vi.fn(async (_u: unknown, init?: { body?: string }) => {
+        const method = String(JSON.parse(String(init?.body ?? "{}")).method ?? "");
+        if (method === "account_info") {
+          return new Response(JSON.stringify(ACCOUNT_INFO_OK), { status: 200 });
+        }
+        page += 1;
+        return new Response(
+          JSON.stringify({
+            result: {
+              account: ADDR,
+              lines: [{ account: PEER, balance: "1", currency: "USD", limit: "2" }],
+              ledger_index: 106661700 + page,
+              validated: true,
+              status: "success",
+              ...(page < 3 ? { marker: `page-${page}` } : {}),
+            },
+          }),
+          { status: 200 },
+        );
+      }) as never,
+    });
+    const text = (await provider.get(rt, msg(`balance of ${ADDR}`), undefined as never)).text ?? "";
+    expect(page, "the setup must actually have paginated").toBeGreaterThan(1);
+    expect(text).toMatch(/ledger_spread/i);
+  });
+
   it("the SUCCESS path produces a non-empty report", async () => {
     // Confirmed hole: replacing the success text with "" stayed green, because
     // nothing asserted that a fully successful lookup says anything at all.

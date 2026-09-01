@@ -104,12 +104,28 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
 
   type Budget = ReturnType<typeof makeBudget>;
 
-  async function fetchLines(
-    address: string,
-    budget: Budget,
-  ): Promise<{ lines: TrustLine[]; moreAvailable: boolean; droppedLines: number } | Refusal> {
+  /**
+   * What one trust line lookup found, including WHICH LEDGER it found it on.
+   *
+   * The ledger index is carried rather than dropped because this function is the
+   * only place that knows it, and the report is the only place it matters. Each
+   * page is its own request against `validated`, so a multi-page list can
+   * straddle two ledgers even when the account_info call agreed with page one.
+   */
+  interface LinesResult {
+    lines: TrustLine[];
+    moreAvailable: boolean;
+    droppedLines: number;
+    /** The ledger the LAST page came from, or null if no page was read. */
+    ledgerIndex: number | null;
+    ledgerIndexVaried: boolean;
+  }
+
+  async function fetchLines(address: string, budget: Budget): Promise<LinesResult | Refusal> {
     const lines: TrustLine[] = [];
+    const ledgersSeen = new Set<number>();
     let droppedLines = 0;
+    let ledgerIndex: number | null = null;
     let marker: unknown;
 
     // Bounded pagination. An account can hold thousands of trust lines and each
@@ -136,13 +152,29 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
 
       lines.push(...parsed.value.lines);
       droppedLines += parsed.value.droppedLines;
+      ledgerIndex = parsed.value.ledgerIndex;
+      ledgersSeen.add(parsed.value.ledgerIndex);
       marker = parsed.value.marker;
-      if (marker === undefined) return { lines, moreAvailable: false, droppedLines };
+      if (marker === undefined) {
+        return {
+          lines,
+          moreAvailable: false,
+          droppedLines,
+          ledgerIndex,
+          ledgerIndexVaried: ledgersSeen.size > 1,
+        };
+      }
     }
 
     // Stopped at the bound with a marker outstanding: more exist and this plugin
     // will not chase them. Reported rather than hidden.
-    return { lines, moreAvailable: true, droppedLines };
+    return {
+      lines,
+      moreAvailable: true,
+      droppedLines,
+      ledgerIndex,
+      ledgerIndexVaried: ledgersSeen.size > 1,
+    };
   }
 
   async function run(message: Memory): Promise<ProviderResult> {
@@ -177,11 +209,8 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
 
     const linesResult = await fetchLines(address.value, budget);
     if ("ok" in linesResult && linesResult.ok === false) return speak(linesResult);
-    const { lines, moreAvailable, droppedLines } = linesResult as {
-      lines: TrustLine[];
-      moreAvailable: boolean;
-      droppedLines: number;
-    };
+    const { lines, moreAvailable, droppedLines, ledgerIndex, ledgerIndexVaried } =
+      linesResult as LinesResult;
 
     const account: AccountInfo = info.value;
     return {
@@ -195,6 +224,8 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
         truncatedLines: 0,
         moreAvailable,
         droppedLines,
+        linesLedgerIndex: ledgerIndex,
+        linesLedgerVaried: ledgerIndexVaried,
       }),
       values: {
         xrplLookup: "ok",

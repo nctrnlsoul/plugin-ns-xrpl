@@ -1,0 +1,23 @@
+60
+# The number of mutation entries that must exist in checks/mutations.ts.
+#
+# Same job as checks/test_count_floor.txt, one layer out. That file stops the
+# SUITE losing tests silently. This one stops the HARNESS losing the entries
+# that prove the suite can fail, which is the thing that decides whether the
+# suite is worth anything.
+#
+# Why it exists: the count was got wrong in both directions. A build reported 38
+# entries and a cold verification pass reported 37, each stated twice, and
+# neither had a command beside it. check.ts prints only "pass (103.4s)" for the
+# mutation step and discards the harness's own count line, so nobody running
+# `bun run verify` ever saw the real number. Both parties fell back to counting
+# an array by eye.
+#
+# 38 was correct. It is now 60. Twelve were added for the four defects the
+# first cold verification pass found in the shipped artifact (D1 to D4), taking
+# it to 50. Ten more were added for the three the SECOND cold pass found: F1
+# (the size cap dropped rows uncounted and cut the last one mid-value), F2 (six
+# count assertions that were satisfied incidentally by the fixture rather than
+# by the notice they named) and F5 (the host declared as a hard dependency).
+#
+# If you lower this, say why in the commit message.

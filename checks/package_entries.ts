@@ -10,18 +10,57 @@
 // tarball was complete, the build was green, and every consumer would have got
 // zero types.
 //
-// This builds first, so it can never pass by inspecting a stale or absent dist.
+// TWO trees are measured here, and they are different facts.
+//
+// D1, and it is the reason this file was restructured. The original ran the
+// build FIRST, and build.ts deletes dist. So the guard cleaned its own subject
+// before measuring it, and could not fail on the input it existed to catch: it
+// printed "no frontend, no build metadata, nothing secret-shaped" and exited 0
+// against a tree where `npm pack --dry-run` listed 163.4 kB of
+// dist/tsconfig.tsbuildinfo, 57% of the unpacked package.
+//
+// So phase 1 measures the tree AS HANDED, which is the tree `npm publish` would
+// actually ship, because npm rebuilds nothing on its own. Phase 2 rebuilds and
+// measures again, which is the original check and still catches a stale or
+// absent dist. Neither replaces the other.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { scanPackListing } from "./pack_listing.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const WIN = process.platform === "win32";
 
 const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 
-console.log("package entries: building first, so this cannot inspect a stale dist");
+/** Read the real tarball listing rather than assuming `files` behaves. */
+function packListing(): string {
+  const pack = spawnSync("npm", ["pack", "--dry-run"], { cwd: ROOT, encoding: "utf8", shell: WIN });
+  return `${pack.stdout ?? ""}${pack.stderr ?? ""}`;
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 1. The WORKING TREE, exactly as handed over. Nothing is rebuilt first.
+// ---------------------------------------------------------------------------
+if (existsSync(join(ROOT, "dist"))) {
+  const asHanded = scanPackListing(packListing(), "as handed");
+  if (asHanded.length > 0) {
+    console.log("package entries: the WORKING TREE would publish files that must not ship.\n");
+    for (const p of asHanded) console.log(`  - ${p}`);
+    console.log("\nThis is the tree as handed over, measured BEFORE any rebuild, because that");
+    console.log("is the tree npm publish would ship. Run `bun run build` and check again.");
+    process.exit(1);
+  }
+  console.log("package entries: the tree as handed is clean (measured before any rebuild)");
+} else {
+  console.log("package entries: no dist/ yet, so the as-handed tree has nothing to be stale");
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 2. Rebuild, then check what package.json PROMISES actually exists.
+// ---------------------------------------------------------------------------
+console.log("package entries: building, so the rest cannot pass on a stale dist");
 const build = spawnSync("bun", ["run", "build"], { cwd: ROOT, encoding: "utf8", shell: WIN });
 if (build.status !== 0) {
   console.log("package entries: the build FAILED, so there is nothing to verify.");
@@ -53,29 +92,10 @@ for (const [label, value] of promised) {
   }
 }
 
-// Read the real tarball listing rather than assuming `files` behaves.
-const pack = spawnSync("npm", ["pack", "--dry-run"], { cwd: ROOT, encoding: "utf8", shell: WIN });
-const listing = `${pack.stdout ?? ""}${pack.stderr ?? ""}`;
-
-// The deleted frontend organism must be absent from the PACKAGE, not just the
-// repo. Rule 85: dead code answers audits on behalf of live code.
-const BANNED = ["react", "vite", "tailwind", "postcss", "frontend", "index.html", "tanstack"];
-for (const term of BANNED) {
-  const re = new RegExp(`^npm notice.*${term}`, "im");
-  if (re.test(listing)) problems.push(`the tarball still contains something matching "${term}"`);
-}
-
-// Build metadata is not a deliverable.
-for (const junk of ["tsbuildinfo", ".env", "node_modules"]) {
-  const re = new RegExp(`^npm notice.*${junk.replace(".", "\\.")}`, "im");
-  if (re.test(listing)) problems.push(`the tarball ships "${junk}", which is not a deliverable`);
-}
-
-// Nothing that could carry a secret.
-for (const secretish of [".npmrc", "id_rsa", ".pem", ".key"]) {
-  const re = new RegExp(`^npm notice.*${secretish.replace(".", "\\.")}`, "im");
-  if (re.test(listing)) problems.push(`the tarball ships "${secretish}"`);
-}
+// Now the freshly built tree, through the same scanner phase 1 used. A term the
+// build itself emits would be invisible to phase 1 alone.
+const listing = packListing();
+problems.push(...scanPackListing(listing, "after a fresh build"));
 
 const files = (listing.match(/^npm notice total files: (\d+)/im) ?? [])[1];
 const size = (listing.match(/^npm notice unpacked size: (.+)$/im) ?? [])[1];
@@ -88,4 +108,5 @@ if (problems.length > 0) {
 
 console.log(`package entries: every declared entry exists; ${files} files, ${size} unpacked`);
 console.log("package entries: no frontend, no build metadata, nothing secret-shaped");
+console.log("package entries: BOTH the tree as handed and the freshly built tree were measured");
 process.exit(0);

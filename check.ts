@@ -110,7 +110,18 @@ for (const step of STEPS) {
   const secs = ((Date.now() - started) / 1000).toFixed(1);
 
   if (r.status === 0) {
-    console.log(`    pass (${secs}s)\n`);
+    console.log(`    pass (${secs}s)`);
+    // Print the step's OWN last line, not just "pass".
+    //
+    // Discarding it is why a build reported 38 mutation entries and a cold
+    // verification pass reported 37, each twice, neither with a command beside
+    // it: the harness prints "38 defects reintroduced, 38 caught" and this gate
+    // threw it away, so both parties fell back to counting an array by eye. A
+    // check whose count nobody sees is a count people re-derive, and eyes
+    // miscount.
+    const summary = (r.stdout ?? "").trim().split("\n").filter(Boolean).pop();
+    if (summary) console.log(`    ${summary}`);
+    console.log();
   } else {
     failed.push(step.name);
     console.log(`    FAIL (${secs}s)`);
@@ -128,7 +139,28 @@ console.log(
 );
 console.log("  new tests:     <each one, AND what you broke to prove it fails>");
 console.log("  removed:       <every test/branch/line deleted, or 'nothing'>");
-console.log("  topology:      <what this assumes about its environment,");
+// The hook status, repeated HERE, beside the verdict.
+//
+// It is already printed at the top of the run, and then roughly a hundred
+// seconds of step output scrolls past it, so by the time GATE GREEN appears the
+// warning is off screen and the reader sees a green gate with no idea whether
+// anything runs it automatically. HIGHWATER shipped a README and a blog post
+// both claiming "runs on a pre-commit hook" for a hook that had never executed
+// once.
+//
+// It does NOT change the exit code, deliberately. A fresh clone has no hook, CI
+// has no hooks and needs none, and prepublishOnly runs this gate, so failing
+// here would turn a publish red for a reason that has nothing to do with the
+// package. A gate that goes red for environmental reasons is a gate people
+// learn to skip, which is the same argument that keeps the live check out of it.
+console.log(
+  `  topology:      pre-commit hook ${
+    ok
+      ? "INSTALLED, so this gate runs on every commit"
+      : "NOT INSTALLED, so NOTHING runs this gate automatically"
+  }`,
+);
+console.log("                 <what else this assumes about its environment,");
 console.log("                  and what confirmed the environment agrees>");
 console.log("  reviewed by:   <adversarial review brief, or why none>");
 console.log("  CANNOT CHECK:");

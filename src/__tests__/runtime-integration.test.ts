@@ -104,8 +104,15 @@ describe("the refusal survives the real runtime and reaches the prompt", () => {
     );
 
     // The finding, inverted into a guarantee: our refusal is in the prompt.
+    //
+    // F2 audit: this asserted toContain("XRPL"), and the character above is
+    // named "XRPL Test Agent", so the prompt carries "XRPL" whether or not this
+    // provider contributed anything. The assertion has to name the sentence
+    // only this provider can produce.
     expect(prompt.toLowerCase()).toMatch(/could not|unable|failed|refus/);
-    expect(prompt).toContain("XRPL");
+    expect(prompt, "the provider's own refusal, not the character's name").toContain(
+      "XRPL lookup refused.",
+    );
   });
 
   it("a malformed address refusal is VISIBLE in state.text", async () => {

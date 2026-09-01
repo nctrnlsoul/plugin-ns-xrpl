@@ -11,8 +11,8 @@
 // src/core/address.ts and src/provider.ts within a minute of existing, and both
 // were restructured rather than exempted.
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -55,6 +55,57 @@ function isCommentLine(raw: string): boolean {
   return t.startsWith("//") || t.startsWith("*") || t.startsWith("/*");
 }
 
+/**
+ * The two CHARACTER rules run over every .ts file under src/. The rest do not.
+ *
+ * That split is the whole design. CLAUDE.md bans literal invisible and control
+ * characters in source without qualification, but this lint enforced it over
+ * eight files, and the two that broke the rule were tests: they carried literal
+ * NUL, BEL, ESC and U+202E RIGHT-TO-LEFT OVERRIDE. Measured cost, not a
+ * theoretical one: grep classified both files as binary and silently skipped 44
+ * of the suite's 173 `it(` sites, so a search over src/__tests__ returned a
+ * clean-looking partial answer.
+ *
+ * Widening only these two keeps the promise at the top of this file. A linter
+ * that shouts about everything gets muted, and a muted linter is worse than
+ * none because it looks like coverage. A nullish fallback inside a test is
+ * usually fine; a literal NUL inside a test is the same defect wherever it sits.
+ */
+function everyTsFileUnder(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...everyTsFileUnder(full));
+    else if (entry.name.endsWith(".ts")) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * C1 controls, by code point rather than by a regex containing them.
+ *
+ * Not covered by CONTROL above, invisible in most editors, and written this way
+ * so this file never has to hold the characters it bans.
+ */
+function hasC1Control(raw: string): boolean {
+  for (const ch of raw) {
+    const cp = ch.codePointAt(0);
+    if (cp !== undefined && cp >= 0x80 && cp <= 0x9f) return true;
+  }
+  return false;
+}
+
+function checkCharacters(rel: string, source: string) {
+  source.split("\n").forEach((raw, i) => {
+    if (INVISIBLE.test(raw) || hasC1Control(raw)) {
+      report(rel, i + 1, "literal-invisible-char", "line contains a literal invisible character");
+    }
+    if (CONTROL.test(raw)) {
+      report(rel, i + 1, "literal-control-char", "line contains a literal control character");
+    }
+  });
+}
+
 for (const rel of DECIDING_FILES) {
   let source: string;
   try {
@@ -64,19 +115,14 @@ for (const rel of DECIDING_FILES) {
     continue;
   }
 
+  // Invisible and control characters are checked on EVERY line, comments
+  // included, because a comment is still a place they can hide.
+  checkCharacters(rel, source);
+
   const lines = source.split("\n");
 
   lines.forEach((raw, i) => {
     const n = i + 1;
-
-    // Invisible and control characters are checked on EVERY line, comments
-    // included, because a comment is still a place they can hide.
-    if (INVISIBLE.test(raw)) {
-      report(rel, n, "literal-invisible-char", "line contains a literal invisible character");
-    }
-    if (CONTROL.test(raw)) {
-      report(rel, n, "literal-control-char", "line contains a literal control character");
-    }
 
     if (isCommentLine(raw)) return;
     const code = raw.replace(/\/\/.*$/, "");
@@ -127,8 +173,30 @@ for (const rel of DECIDING_FILES) {
   }
 }
 
+// Every OTHER .ts file under src/, character rules only. This is the half that
+// was missing: the rule was absolute and the enforcement covered eight files.
+const decidingSet = new Set(DECIDING_FILES.map((f) => join(ROOT, f)));
+const otherSrcFiles = everyTsFileUnder(join(ROOT, "src")).filter((f) => !decidingSet.has(f));
+
+for (const abs of otherSrcFiles) {
+  checkCharacters(relative(ROOT, abs).split(sep).join("/"), readFileSync(abs, "utf8"));
+}
+
+// Rule 95: a sweep over an empty list passes vacuously. Say what was covered.
+if (otherSrcFiles.length === 0) {
+  report(
+    "src",
+    0,
+    "empty-sweep",
+    "the character sweep found no files to read, so it proved nothing",
+  );
+}
+
 if (findings.length === 0) {
-  console.log(`fail-open lint: clean across ${DECIDING_FILES.length} deciding files`);
+  console.log(
+    `fail-open lint: clean across ${DECIDING_FILES.length} deciding files (all rules) ` +
+      `and ${otherSrcFiles.length} further src files (character rules only)`,
+  );
   process.exit(0);
 }
 

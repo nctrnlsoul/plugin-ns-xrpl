@@ -85,7 +85,11 @@ describe("validateAccountInfoResponse", () => {
     if (!r.ok) {
       expect(r.code).toBe("ACCOUNT_NOT_FOUND");
       expect(r.message).not.toMatch(/\b0 XRP\b/);
-      expect(r.message.toLowerCase()).toContain("not");
+      // F2 audit: this was `toContain("not")`, satisfied by "cannot" and
+      // "nothing" and by every other refusal in the package. Pin the sentence
+      // that actually draws the distinction this test is named for.
+      expect(r.message.toLowerCase()).toContain("does not exist");
+      expect(r.message.toLowerCase()).toContain("exists and holds nothing");
     }
   });
 

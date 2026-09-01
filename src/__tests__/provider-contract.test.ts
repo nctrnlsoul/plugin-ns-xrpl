@@ -211,7 +211,13 @@ describe("refusals are legible, not just non-empty", () => {
     });
     const r = await provider.get(rt, msg(`balance of ${ADDR}`), undefined as never);
     const text = (r.text ?? "").toLowerCase();
-    expect(text).toContain("not");
+    // F2 audit: this was `toContain("not")`, which "cannot", "nothing" and
+    // every other refusal message in the package also satisfies. It could not
+    // tell a not-found report from any other refusal, which is the one
+    // distinction this test exists to make.
+    expect(r.values?.xrplRefusalCode).toBe("ACCOUNT_NOT_FOUND");
+    expect(text).toContain("does not exist");
+    expect(text).toContain("different from an account that exists and holds nothing");
     expect(text).not.toMatch(/\b0 xrp\b/);
   });
 

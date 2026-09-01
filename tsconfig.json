@@ -11,6 +11,14 @@
 		"skipLibCheck": true,
 		"incremental": true,
 		"composite": true,
+		// D1. outDir is "dist" and --noEmit does NOT suppress the build info, so
+		// `tsc --noEmit` wrote 163.4 kB of tsconfig.tsbuildinfo straight into the
+		// directory package.json ships, and npm packed it. `bun run typecheck`,
+		// `bun run check.ts` and any editor running tsserver all did this.
+		// Pointing it outside dist makes the safe path the default path: no
+		// command ordering can put it back in the tarball. Gitignored, and not on
+		// package.json's files allowlist.
+		"tsBuildInfoFile": "./.tsbuildinfo",
 		"declaration": true,
 		"declarationMap": true,
 		"forceConsistentCasingInFileNames": true,
@@ -27,6 +35,10 @@
 		"isolatedModules": false,
 		"noEmit": true
 	},
-	"include": ["src/**/*.ts"],
+	// checks/ is listed because a test imports checks/pack_listing.ts, and under
+	// "composite" every file the program reaches must be listed. Typechecking the
+	// gate's own code is worth having anyway. tsconfig.build.json narrows this
+	// back to src/ so none of it can reach the published bundle.
+	"include": ["src/**/*.ts", "checks/**/*.ts"],
 	"exclude": []
 }

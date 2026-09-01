@@ -42,6 +42,15 @@ interface Mutation {
   find: string;
   replace: string;
   why: string;
+  /**
+   * Decode \uXXXX in `replace` before writing it.
+   *
+   * Needed for exactly one class this file otherwise cannot express: a LITERAL
+   * control or invisible character in source. Writing one here would put the
+   * defect inside the harness that tests for it, and CLAUDE.md bans it outright.
+   * So the escape is stored and decoded at apply time.
+   */
+  decodeEscapes?: boolean;
 }
 
 const MUTATIONS: Mutation[] = [
@@ -104,7 +113,11 @@ const MUTATIONS: Mutation[] = [
   {
     id: "currency-hex-decoded",
     file: "src/core/render.ts",
-    find: "  if (HEX_CURRENCY.test(code)) return `hex:${code.toUpperCase().slice(0, 32)}`;",
+    // Search text updated when D2 rewrote this line to stop cutting the code to
+    // 32 digits. The harness caught the drift itself: a stale entry is a hard
+    // failure here, not a skip, because a search text that matches nothing
+    // mutates nothing and reads as "the guard held".
+    find: "  if (HEX_CURRENCY.test(code)) return `${HEX_LABEL}${code.toUpperCase()}`;",
     replace:
       '  if (HEX_CURRENCY.test(code)) return Buffer.from(code, "hex").toString("ascii").replace(/\\0+$/, "");',
     why: "finding H-1: a 40-hex currency code carries 20 attacker-chosen bytes into the prompt",
@@ -266,8 +279,16 @@ const MUTATIONS: Mutation[] = [
   {
     id: "rp-size-cap-marker-dropped",
     file: "src/core/render.ts",
-    find: "  return report.slice(0, BOUNDS.MAX_RENDERED_CHARS - marker.length) + marker;",
-    replace: "  return report.slice(0, BOUNDS.MAX_RENDERED_CHARS);",
+    // Search text updated when F1 restructured the renderer. The harness caught
+    // the drift itself and went RED rather than quietly testing nothing, which
+    // is the whole reason a stale entry is a hard failure here.
+    //
+    // The path this guards also moved. It is now the LAST RESORT only: reached
+    // when the header alone overruns the cap, so there are no rows left to drop.
+    // A hard cut still has to be spoken, and src/__tests__/render-redproof.ts
+    // pins the marker on exactly that path.
+    find: "  return build(0).slice(0, BOUNDS.MAX_RENDERED_CHARS - marker.length) + marker;",
+    replace: "  return build(0).slice(0, BOUNDS.MAX_RENDERED_CHARS);",
     why: "the only cap test asserted length alone, so silently cutting the report satisfied it exactly",
   },
   {
@@ -327,7 +348,254 @@ const MUTATIONS: Mutation[] = [
     replace: "export const ADDRESS_CANDIDATE_PATTERN = /r[1-9A-HJ-NP-Za-km-z]{32,34}/g;",
     why: "short but valid classic addresses stopped being detected, so a real account produced silence",
   },
+
+  // ---------------------------------------------------------------------------
+  // Everything below reintroduces a defect a COLD VERIFICATION pass found in the
+  // shipped artifact, having read the claims and not the build. Four defects,
+  // D1 to D4. Each was measured before it was fixed, and each entry here is the
+  // measurement turned into something that has to stay caught.
+  // ---------------------------------------------------------------------------
+
+  // D1. The tarball shipped dist/tsconfig.tsbuildinfo, 163.4 kB, 57% of the
+  // unpacked package, and the guard against it could not fail.
+  {
+    id: "d1-buildinfo-back-in-dist",
+    file: "tsconfig.json",
+    find: '"tsBuildInfoFile": "./.tsbuildinfo",',
+    replace: '"tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",',
+    why: "tsc --noEmit writes the build info into outDir, so every typecheck re-contaminated the tarball",
+  },
+  {
+    id: "d1-prepublish-hook-removed",
+    file: "package.json",
+    find: '"prepublishOnly": "bun run verify"',
+    replace: '"prepublishOnlyDisabled": "bun run verify"',
+    why: "npm rebuilds nothing on its own, so without this hook publish ships whatever is in dist",
+  },
+  {
+    id: "d1-package-check-rebuilds-before-looking",
+    file: "checks/package_entries.ts",
+    find: 'if (existsSync(join(ROOT, "dist"))) {',
+    replace: "if (false) {",
+    why: "THE DEEPER DEFECT: the guard built first, and build.ts deletes dist, so it cleaned its own subject before measuring and printed no-build-metadata against a contaminated tree",
+  },
+  {
+    id: "d1-tsbuildinfo-term-dropped",
+    file: "checks/pack_listing.ts",
+    find: 'export const BANNED_BUILD_METADATA: readonly string[] = ["tsbuildinfo", ".env", "node_modules"];',
+    replace: 'export const BANNED_BUILD_METADATA: readonly string[] = [".env", "node_modules"];',
+    why: "the one term that actually shipped, removed from the list the scanner reads",
+  },
+
+  // D2. A 40-hex currency code was cut to 32 with no notice, so two codes
+  // differing only in their last four bytes rendered identically.
+  {
+    id: "d2-currency-recut-to-32",
+    file: "src/core/render.ts",
+    find: "  if (HEX_CURRENCY.test(code)) return `${HEX_LABEL}${code.toUpperCase()}`;",
+    replace:
+      "  if (HEX_CURRENCY.test(code)) return `${HEX_LABEL}${code.toUpperCase().slice(0, 32)}`;",
+    why: "the original defect: distinct tokens collide in a report whose only job is to be accurate",
+  },
+  {
+    id: "d2-truncation-notice-dropped",
+    file: "src/core/render.ts",
+    find: "  const label = `hex-truncated-from-${code.length}-chars:`;",
+    replace: "  const label = HEX_LABEL;",
+    why: "a shortened value wearing the complete-value label is silent truncation, which invariant 10 forbids",
+  },
+
+  // D3. Literal control and bidi characters in two test files made grep treat
+  // both as binary, hiding 44 of 173 test sites from any text search.
+  {
+    id: "d3-literal-invisible-in-source",
+    file: "src/core/render.ts",
+    find: "const DROPS_PER_XRP = 1_000_000n;",
+    replace: "const DROPS_PER_XRP = 1_000_000n; // \\u200B",
+    decodeEscapes: true,
+    why: "a literal zero-width space in source, the exact class that hid a quarter of the suite from grep",
+  },
+  {
+    id: "d3-hygiene-scanner-blind-to-bidi",
+    file: "src/__tests__/source-hygiene.test.ts",
+    find: "  [0x202a, 0x202e],",
+    replace: "  [0x202a, 0x202d],",
+    why: "narrowing the range past U+202E RIGHT-TO-LEFT OVERRIDE leaves the sweep running and blind, which the positive control exists to catch",
+  },
+
+  // D4. The trust lines' own ledger index was computed and discarded, so the
+  // report attributed them to the balance's ledger.
+  {
+    id: "d4-lines-ledger-index-discarded",
+    file: "src/provider.ts",
+    find: "        linesLedgerIndex: ledgerIndex,",
+    replace: "        linesLedgerIndex: undefined,",
+    why: "the original defect: the provider held both indices and threw one away",
+  },
+  {
+    id: "d4-lines-ledger-borrowed-from-balance",
+    file: "src/core/render.ts",
+    find: "  out.push(`  trust_lines_ledger_index: ${renderCount(linesLedger)}`);",
+    replace:
+      "  out.push(`  trust_lines_ledger_index: ${renderCount(linesLedger ?? balanceLedger)}`);",
+    why: "never default an absent value: borrowing the balance's ledger states as fact the one thing not known",
+  },
+  {
+    id: "d4-mismatch-notice-removed",
+    file: "src/core/render.ts",
+    find: "    linesLedger !== balanceLedger",
+    replace: "    false && linesLedger !== balanceLedger",
+    why: "two ledgers combined into one report with nothing saying so",
+  },
+  {
+    id: "d4-spread-notice-removed",
+    file: "src/core/render.ts",
+    find: "  if (input?.linesLedgerVaried === true) {",
+    replace: "  if (false) {",
+    why: "a paginated list straddling two ledgers may double-count or omit entries, and said nothing",
+  },
+
+  // ---------------------------------------------------------------------------
+  // A SECOND cold verification pass, run against the tree the four repairs above
+  // produced. It DISPROVED the standing claim that every truncation, omission
+  // and drop is stated with a count.
+  //
+  // F1 was a live defect in the renderer. F2 was a defect in the tests: the
+  // shipped behaviour was right and nothing pinned it. F5 was a defect in the
+  // published dependency surface. Every entry below is that pass's measurement
+  // turned into something that has to stay caught.
+  // ---------------------------------------------------------------------------
+
+  // F1. The size cap sliced the joined report, so rows vanished with no count
+  // while trust_lines_shown still claimed the pre-cap number. Measured through
+  // the real provider with ordinary mainnet values: 23 trust lines carrying
+  // 40-hex currency codes made the report say 23 and print 22.
+  {
+    id: "f1-size-cap-count-removed",
+    file: "src/core/render.ts",
+    find: "    if (sizeCapped > 0) {",
+    replace: "    if (false) {",
+    why: "the size cap dropped whole rows and said nothing, which is the one thing invariant 10 forbids",
+  },
+  {
+    id: "f1-shown-count-not-corrected",
+    file: "src/core/render.ts",
+    find: "    out.push(`  trust_lines_shown: ${kept}`);",
+    replace: "    out.push(`  trust_lines_shown: ${rows.length}`);",
+    why: "the original defect: the claimed count came from the pre-cap list, so the report stated 25 and printed 12",
+  },
+  {
+    id: "f1-row-cut-in-half",
+    file: "src/core/render.ts",
+    find: "  for (let kept = rows.length; kept >= 0; kept--) {",
+    replace: "  for (let kept = rows.length; kept >= rows.length; kept--) {",
+    why: "without the search the report falls to the hard slice, which ends the last row mid-value and still reads as a row",
+  },
+
+  // F2. The count in each notice was asserted only against the WHOLE report, so
+  // an unrelated digit in the fixture satisfied it. Replacing a count with a
+  // word left all 215 tests green.
+  {
+    id: "f2-unreadable-count-dropped",
+    file: "src/core/render.ts",
+    find: "`  trust_lines_unreadable: ${unreadable} returned by the ledger but not readable, so they were omitted from this report.`",
+    replace:
+      "`  trust_lines_unreadable: some returned by the ledger but not readable, so they were omitted from this report.`",
+    why: 'THE F2 SURVIVOR: the only count assertion was toContain("3") against a report whose balance 56774133566 already held a 3',
+  },
+  {
+    id: "f2-truncation-counts-dropped",
+    file: "src/core/render.ts",
+    find: "`  trust_lines_truncated: ${notShown} returned but not shown, ${notRetrieved} not retrieved. This report is INCOMPLETE and must not be described as a full list.`",
+    replace:
+      "`  trust_lines_truncated: some returned but not shown, some not retrieved. This report is INCOMPLETE and must not be described as a full list.`",
+    why: 'pinned by /500/ and toContain("4000") against the whole report, both of which other lines already satisfied',
+  },
+  {
+    id: "f2-mismatch-line-drops-its-numbers",
+    file: "src/core/render.ts",
+    find: "`  trust_lines_ledger_mismatch: the balance is from ledger ${balanceLedger} and the trust lines are from ledger ${linesLedger}. This report combines two ledgers and is not a single point-in-time view of the account.`",
+    replace:
+      "`  trust_lines_ledger_mismatch: the balance and the trust lines are from different ledgers. This report combines two ledgers and is not a single point-in-time view of the account.`",
+    why: "both numbers were asserted against the whole report, where the ledger_index and trust_lines_ledger_index lines already carried them",
+  },
+  {
+    id: "f2-currency-truncation-label-drops-its-length",
+    file: "src/core/render.ts",
+    find: "  const label = `hex-truncated-from-${code.length}-chars:`;",
+    replace: "  const label = `hex-truncated-from-many-chars:`;",
+    why: 'the original length was pinned by toContain("60"), which the hex payload itself can satisfy (a backtick encodes to 60)',
+  },
+  {
+    id: "f2-notfound-message-generic",
+    file: "src/core/response.ts",
+    find: '        "That XRPL account does not exist on the validated ledger. The ledger has no record of it, which is different from an account that exists and holds nothing.",',
+    replace: '        "The XRPL node could not answer that lookup.",',
+    why: 'still contains the substring "not", so the old toContain("not") assertions could not tell a not-found report from any other refusal',
+  },
+  {
+    id: "f2-refusal-prefix-changed",
+    file: "src/provider.ts",
+    find: "    text: `XRPL lookup refused. ${r.message}`,",
+    replace: "    text: `Lookup refused. ${r.message}`,",
+    why: 'runtime-integration asserted toContain("XRPL") on the prompt, and the test character is named "XRPL Test Agent", so it passed on the name',
+  },
+
+  // F5. Declared under dependencies at an exact prerelease pin, and never loaded
+  // at runtime: every import is `import type` and the bundle imports only
+  // node:crypto. A plugin does not depend on its host.
+  {
+    id: "f5-elizaos-back-to-hard-dependency",
+    file: "package.json",
+    find: '  "peerDependencies": {\n    "@elizaos/core": ">=2.0.3-beta.7 <3.0.0-0"\n  },',
+    replace: '  "dependencies": {\n    "@elizaos/core": "2.0.3-beta.7"\n  },',
+    why: "forces a beta this package never loads into every consumer's tree, and pins them to one build of the host that is loading it",
+  },
 ];
+
+// ---------------------------------------------------------------------------
+// A FLOOR ON THE MUTATION COUNT, for the same reason there is one on the test
+// count: a deletion is invisible when an addition lands in the same edit.
+//
+// This is here because the count was actually got wrong. A build reported 38
+// entries and a cold verification pass reported 37, twice each, and neither
+// number sat beside a command. The cause is one line in check.ts: on success it
+// prints `pass (103.4s)` and DISCARDS the harness's own
+// "38 defects reintroduced, 38 caught" summary, so anyone running `bun run
+// verify` never sees the count and falls back to eyeballing the array.
+//
+// Checked BEFORE the baseline run, because a floor that costs two minutes to
+// report is a floor people skip.
+// ---------------------------------------------------------------------------
+const floorText = readFileSync(join(ROOT, "checks", "mutation_count_floor.txt"), "utf8");
+const floorLine = floorText.split("\n")[0]?.trim() ?? "";
+const floor = Number.parseInt(floorLine, 10);
+
+if (!Number.isInteger(floor) || floor <= 0) {
+  console.log(
+    `mutations: the floor file does not start with a positive integer (${JSON.stringify(floorLine)})`,
+  );
+  process.exit(1);
+}
+
+// A duplicated id is its own way to lose an entry: two mutations print under one
+// name and the total still looks healthy.
+const ids = new Set(MUTATIONS.map((m) => m.id));
+if (ids.size !== MUTATIONS.length) {
+  const seen = new Set<string>();
+  const dupes = MUTATIONS.map((m) => m.id).filter((id) => seen.size === seen.add(id).size);
+  console.log(`mutations: duplicate id(s): ${[...new Set(dupes)].join(", ")}`);
+  process.exit(1);
+}
+
+if (MUTATIONS.length < floor) {
+  console.log(
+    `mutations: ${MUTATIONS.length} entries, floor is ${floor}. ${floor - MUTATIONS.length} MISSING.`,
+  );
+  console.log("Lowering the floor is allowed. Doing it silently is not: edit");
+  console.log("checks/mutation_count_floor.txt and say why in the commit message.");
+  process.exit(1);
+}
 
 function runSuite(): { red: boolean; summary: string } {
   const r = spawnSync(join(ROOT, "node_modules", ".bin", "vitest"), ["run", "src/__tests__"], {
@@ -379,7 +647,12 @@ try {
       continue;
     }
 
-    writeFileSync(join(ROOT, m.file), original.replace(m.find, m.replace), "utf8");
+    const replacement = m.decodeEscapes
+      ? m.replace.replace(/\\u([0-9A-Fa-f]{4})/g, (_all, hex: string) =>
+          String.fromCharCode(Number.parseInt(hex, 16)),
+        )
+      : m.replace;
+    writeFileSync(join(ROOT, m.file), original.replace(m.find, replacement), "utf8");
     const result = runSuite();
     writeFileSync(join(ROOT, m.file), original, "utf8");
 

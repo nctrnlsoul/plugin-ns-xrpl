@@ -4,14 +4,15 @@
   "workspaces": {
     "": {
       "name": "@northschema/plugin-xrpl",
-      "dependencies": {
-        "@elizaos/core": "2.0.3-beta.7",
-      },
       "devDependencies": {
         "@biomejs/biome": "2.3.14",
+        "@elizaos/core": "2.0.3-beta.7",
         "@types/node": "^25.0.3",
         "typescript": "^6.0.3",
         "vitest": "^4.1.4",
+      },
+      "peerDependencies": {
+        "@elizaos/core": ">=2.0.3-beta.7 <3.0.0-0",
       },
     },
   },

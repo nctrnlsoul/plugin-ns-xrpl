@@ -1,4 +1,4 @@
-183
+225
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -6,5 +6,22 @@
 # HIGHWATER: a careless whole-tail replacement silently deleted FOURTEEN tests,
 # including every rate-limiter guard, while four new tests landed alongside and
 # kept the total looking healthy. The suite reported 99 passing. Nothing noticed.
+#
+# Raised from 183 to 215 by the four fixes a cold verification pass earned:
+# D1 (build metadata in the tarball, and a guard that cleaned its own subject
+# before measuring it), D2 (a currency code silently cut from 40 hex to 32),
+# D3 (literal control characters hiding a quarter of the suite from grep) and
+# D4 (the trust lines' ledger index computed and discarded).
+#
+# Raised from 215 to 225 by a SECOND cold pass, which disproved the claim that
+# every omission is stated with a count: F1 (the size cap dropped rows with no
+# count while trust_lines_shown still claimed the pre-cap number, and cut the
+# last row mid-value), F2 (the counts inside the notices were asserted only
+# against the whole report, so an unrelated digit in the fixture satisfied them)
+# and F5 (the host declared as a hard dependency it never loads).
+#
+# See also checks/mutation_count_floor.txt, which is this same idea one layer
+# out: this file stops the suite losing tests, that one stops the harness losing
+# the entries that prove the suite can fail.
 #
 # If you lower this, say why in the commit message.
