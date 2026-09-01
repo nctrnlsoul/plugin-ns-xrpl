@@ -514,3 +514,169 @@ describe("a currency code is only ever hex, as a property and not as one example
     }
   });
 });
+
+// D6, which X-006 names as the one place this package still broke its own rule.
+//
+// run() looks up candidates[0] and drops every other address in the message.
+// Every other omission here is counted and stated; that one said nothing, so a
+// message naming five accounts produced a report about one and no reader could
+// tell the other four had ever been mentioned.
+//
+// This is the renderer half: the notice exists, carries its own count, fires at
+// ONE, and is paid for inside the size cap rather than appended past it.
+describe("addresses the lookup skipped are counted, at a threshold of ONE", () => {
+  it("THRESHOLD: exactly one skipped address is stated as 1", () => {
+    // One, not a comfortable large number. Every `> 0` in this file was once
+    // pinned at 500 or 4,000 and could have become `> 1` unnoticed.
+    const out = report({ otherAddressesNotLookedUp: 1 });
+    expect(field(out, "other_addresses_not_looked_up")).toBe(1);
+  });
+
+  it("carries the count on its OWN line, not merely somewhere in the report", () => {
+    // F2's lesson. Asserting the count against the whole report proves nothing:
+    // the balance 56774133566 already supplies a 3, a 5 and a 6 of its own.
+    const out = report({ otherAddressesNotLookedUp: 4 });
+    expect(out).toMatch(/^ {2}other_addresses_not_looked_up: 4\b/m);
+  });
+
+  it("stays silent at zero, so the notice is signal rather than furniture", () => {
+    expect(report({ otherAddressesNotLookedUp: 0 })).not.toMatch(/other_addresses/i);
+  });
+
+  it("stays silent when the caller says nothing about other addresses", () => {
+    expect(report()).not.toMatch(/other_addresses/i);
+  });
+
+  it("does not claim the skipped addresses were checked, because they were not", () => {
+    // The positive property. "2 further accounts" would assert something this
+    // package never measured: those strings were never validated and never
+    // looked up, and the notice has to say exactly that much and no more.
+    const out = report({ otherAddressesNotLookedUp: 3 });
+    expect(out).toMatch(/neither validated nor retrieved/i);
+  });
+
+  it("is paid for INSIDE the size cap, not appended past it", () => {
+    // H-2. A notice added after the cap search is the one line that puts the
+    // report over the bound, and it would be the line saying the report is
+    // incomplete.
+    const out = report({
+      lines: Array.from({ length: BOUNDS.MAX_TRUST_LINES_RENDERED }, () => wide()),
+      otherAddressesNotLookedUp: 9,
+    });
+    expect(out.length).toBeLessThanOrEqual(BOUNDS.MAX_RENDERED_CHARS);
+    expect(field(out, "other_addresses_not_looked_up")).toBe(9);
+  });
+});
+
+// A third cold pass enumerated the report from the SOURCE side rather than the
+// test side: every emitted number replaced with a word that could not appear
+// otherwise, suite run, red required. Four of the report's own numbers survived.
+//
+// The structural cause is not the one the earlier rounds found. These are not
+// weak assertions; there were NO assertions. `owner_count` and
+// `account_sequence` appeared ZERO times in the whole suite and in checks/, so
+// the report could have printed anything at all for either and every test
+// stayed green. A field nobody reads is a field nobody can be wrong about.
+//
+// Enumerating from the test side cannot find this class, because the thing to
+// count is what the code EMITS, not what the tests assert.
+describe("every number the report prints is read back from the line that names it", () => {
+  // All different from each other and from every other number in the fixture,
+  // so no assertion below can pass on a coincidence.
+  const OWNER = 4173;
+  const SEQUENCE = 91337;
+  const LEDGER = 106661700;
+
+  /** Read the "of the N" denominator out of the size-cap notice. */
+  const denominator = (out: string) => {
+    const m = out.match(/trust_lines_size_capped: \d+ of the (\d+) trust lines/);
+    return m?.[1] ? Number.parseInt(m[1], 10) : null;
+  };
+
+  /** Read the ceiling the size-cap notice CLAIMS to be keeping the report under. */
+  const statedCeiling = (out: string) => {
+    const m = out.match(/inside its (\d+) character size cap/);
+    return m?.[1] ? Number.parseInt(m[1], 10) : null;
+  };
+
+  it("prints owner_count as the value it was given, and never as a neighbour's", () => {
+    const out = report({ ownerCount: OWNER, sequence: SEQUENCE, ledgerIndex: LEDGER });
+    expect(out, "the line itself, anchored").toMatch(
+      new RegExp(`^ {2}owner_count: ${OWNER}$`, "m"),
+    );
+    expect(field(out, "owner_count")).toBe(OWNER);
+    expect(field(out, "account_sequence"), "not the sequence").not.toBe(OWNER);
+    expect(field(out, "ledger_index"), "not the ledger index").not.toBe(OWNER);
+
+    // The other half of the guard: absence is spoken, never defaulted to a
+    // number. Invariant 7, at the render layer.
+    const absent = report({ ownerCount: undefined });
+    expect(absent).toMatch(/^ {2}owner_count: <unavailable>$/m);
+  });
+
+  it("prints account_sequence as the value it was given, and never as a neighbour's", () => {
+    const out = report({ ownerCount: OWNER, sequence: SEQUENCE, ledgerIndex: LEDGER });
+    expect(out, "the line itself, anchored").toMatch(
+      new RegExp(`^ {2}account_sequence: ${SEQUENCE}$`, "m"),
+    );
+    expect(field(out, "account_sequence")).toBe(SEQUENCE);
+    expect(field(out, "owner_count"), "not the owner count").not.toBe(SEQUENCE);
+    expect(field(out, "ledger_index"), "not the ledger index").not.toBe(SEQUENCE);
+
+    const absent = report({ sequence: null });
+    expect(absent).toMatch(/^ {2}account_sequence: <unavailable>$/m);
+  });
+
+  it("the size-cap denominator is the rows that WOULD have shown, and shown + capped equals it", () => {
+    // Not a restatement of the count: this is the internal-consistency
+    // property. The three numbers in a capped report have to add up, and a
+    // denominator nobody reads is how "11 of the NINETEEN" printed green.
+    let sawACut = false;
+    for (let n = 1; n <= BOUNDS.MAX_TRUST_LINES_RENDERED; n++) {
+      const out = report({ lines: Array.from({ length: n }, () => wide(48)) });
+      const capped = field(out, "trust_lines_size_capped");
+      if (capped === null) continue;
+      sawACut = true;
+      const denom = denominator(out);
+      expect(denom, `n=${n} the notice must quote a denominator`).toBe(
+        Math.min(n, BOUNDS.MAX_TRUST_LINES_RENDERED),
+      );
+      expect(
+        (field(out, "trust_lines_shown") ?? -1) + capped,
+        `n=${n} shown + capped must equal the denominator`,
+      ).toBe(denom);
+    }
+    // Rule 95: prove the setup reached the state it claims.
+    expect(sawACut, "the sweep must contain at least one capped case").toBe(true);
+  });
+
+  it("the size cap it NAMES is the size cap it enforces", () => {
+    // Non-tautological on purpose. Reading the number back and comparing it to
+    // BOUNDS would pass for any number BOUNDS happened to hold. This proves the
+    // stated ceiling is the real binding constraint, from the output alone:
+    // the report is under it, and one more row would have gone over it.
+    let sawACut = false;
+    for (let n = 2; n <= BOUNDS.MAX_TRUST_LINES_RENDERED; n++) {
+      const out = report({ lines: Array.from({ length: n }, () => wide(48)) });
+      if (field(out, "trust_lines_size_capped") === null) continue;
+      sawACut = true;
+
+      const stated = statedCeiling(out);
+      expect(stated, `n=${n} the notice must quote a character ceiling`).toBe(
+        BOUNDS.MAX_RENDERED_CHARS,
+      );
+      expect(
+        out.length,
+        `n=${n} the report must be under the ceiling it names`,
+      ).toBeLessThanOrEqual(stated ?? -1);
+
+      const rows = out.split("\n").filter((l) => l.includes("trust_line["));
+      const widestRow = Math.max(...rows.map((l) => l.length));
+      expect(
+        out.length + widestRow + 1,
+        `n=${n} one more row must not have fit under the ceiling it names`,
+      ).toBeGreaterThan(stated ?? Number.POSITIVE_INFINITY);
+    }
+    expect(sawACut, "the sweep must contain at least one capped case").toBe(true);
+  });
+});

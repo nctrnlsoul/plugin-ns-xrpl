@@ -330,3 +330,38 @@ describe("isNeverAValidNodeHost, tested directly because it cannot be reached in
     expect(isNeverAValidNodeHost("LOCALHOST")).toBe(true);
   });
 });
+
+// Both numbers-or-values this file's refusals emit survived a source-side
+// enumeration: the port it quotes and the scheme it quotes were read by
+// nothing, so either could have been replaced with a word and stayed green.
+//
+// Unreachable through the provider, which uses the pinned constant.
+// assertAllowedNodeUrl is an EXPORT and is the guard M-4 turns on, so a refusal
+// that misreports what it refused is a guard nobody can audit from its output.
+describe("the URL refusals quote what they actually refused", () => {
+  it("quotes the ACTUAL port, not a constant", () => {
+    for (const port of ["8080", "9999", "1"]) {
+      const r = assertAllowedNodeUrl(`https://xrplcluster.com:${port}/`);
+      expect(r.ok, `port ${port} must be refused`).toBe(false);
+      if (!r.ok) {
+        expect(r.code).toBe("NODE_URL_NOT_ALLOWED");
+        expect(r.message, `port ${port}`).toContain(`used port ${port},`);
+      }
+    }
+  });
+
+  it("quotes the ACTUAL scheme, not a constant", () => {
+    for (const [url, scheme] of [
+      ["http://xrplcluster.com/", "http:"],
+      ["ftp://xrplcluster.com/", "ftp:"],
+      ["ws://xrplcluster.com/", "ws:"],
+    ] as const) {
+      const r = assertAllowedNodeUrl(url);
+      expect(r.ok, `${url} must be refused`).toBe(false);
+      if (!r.ok) {
+        expect(r.code).toBe("NODE_URL_NOT_ALLOWED");
+        expect(r.message, url).toContain(`used ${scheme} rather than https`);
+      }
+    }
+  });
+});

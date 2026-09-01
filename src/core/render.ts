@@ -139,6 +139,30 @@ function renderCount(v: unknown): string {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? String(v) : "<unavailable>";
 }
 
+/**
+ * The one wording for "this message named addresses the lookup never used".
+ *
+ * D6, and X-006 at the message level. `run()` looks up the FIRST address it
+ * finds and skips the rest. That bound stays: one lookup is one account, and
+ * issuing a request per address hands whoever is talking to the agent a request
+ * multiplier. What was wrong is that it said NOTHING, so a report about one
+ * account was indistinguishable from an answer about all of them, in a package
+ * where every other omission is counted out loud.
+ *
+ * It lives in one place because the refusal path speaks it too. Two wordings
+ * for one fact drift, and then only one of them gets fixed.
+ *
+ * The threshold is ONE. It claims nothing about the skipped strings beyond the
+ * fact that they were skipped: they were never validated and never retrieved,
+ * so calling them accounts would assert something this package never measured.
+ */
+export function renderOtherAddressesNotice(count: unknown): string {
+  const n =
+    typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  if (n === 0) return "";
+  return `other_addresses_not_looked_up: ${n}. The message held further text shaped like an XRPL address. Only the FIRST address was looked up; the rest were neither validated nor retrieved, so nothing in this report describes them.`;
+}
+
 export interface RenderableTrustLine {
   readonly account: unknown;
   readonly balance: unknown;
@@ -175,6 +199,13 @@ export interface AccountReportInput {
   readonly linesLedgerIndex?: unknown;
   /** True when the pages of one trust line list did not all come from one ledger. */
   readonly linesLedgerVaried?: unknown;
+  /**
+   * Further address-shaped strings the MESSAGE held that were never looked up.
+   *
+   * A message-level omission rather than a ledger one, which is why it was the
+   * last one still silent: nothing in the response shapes says it happened.
+   */
+  readonly otherAddressesNotLookedUp?: unknown;
 }
 
 /**
@@ -201,6 +232,7 @@ export function renderAccountReport(input: AccountReportInput): string {
     typeof input?.droppedLines === "number" && Number.isFinite(input.droppedLines)
       ? Math.max(0, Math.trunc(input.droppedLines))
       : 0;
+  const otherAddresses = renderOtherAddressesNotice(input?.otherAddressesNotLookedUp);
 
   // D4. The trust lines carry their own ledger index and it was being thrown
   // away, so the report showed the balance's index alone and the lines read as
@@ -267,6 +299,12 @@ export function renderAccountReport(input: AccountReportInput): string {
     out.push(`  ledger_index: ${renderCount(input?.ledgerIndex)}`);
     out.push(`  owner_count: ${renderCount(input?.ownerCount)}`);
     out.push(`  account_sequence: ${renderCount(input?.sequence)}`);
+
+    // D6. Emitted INSIDE build(), like every other notice, so the size-cap
+    // search below pays for the room it takes. A notice appended after the cap
+    // is the one line that puts the report over the bound, and it would be the
+    // line saying the report is incomplete.
+    if (otherAddresses !== "") out.push(`  ${otherAddresses}`);
 
     out.push(`  trust_lines_returned: ${all.length}`);
     out.push(`  trust_lines_shown: ${kept}`);

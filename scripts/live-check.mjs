@@ -15,6 +15,16 @@ import { XRPL_NODE_URL } from "../src/core/node-url.ts";
 const CASES = [
   ["funded account", "what is the balance of rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh"],
   ["issuer with many trust lines", "check rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B"],
+  // D6. One message, two addresses, one lookup. The count itself is computed
+  // from the message and needs no network, so what this case adds over the unit
+  // tests is the thing only the real path shows: the notice standing in a real
+  // report, beside real ledger data, inside the real size cap. Both addresses
+  // are the known-good ones above, so a failure here is about the notice rather
+  // than about either account.
+  [
+    "two addresses, only the first looked up",
+    "compare rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh with rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B",
+  ],
   ["bad checksum", "look up rp4rt3JQKZaC7Docd1kUswQpQBGiRJs6Fk"],
   ["no address at all", "what is the weather today"],
 ];

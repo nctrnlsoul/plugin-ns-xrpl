@@ -1,4 +1,4 @@
-60
+81
 # The number of mutation entries that must exist in checks/mutations.ts.
 #
 # Same job as checks/test_count_floor.txt, one layer out. That file stops the
@@ -19,5 +19,28 @@
 # (the size cap dropped rows uncounted and cut the last one mid-value), F2 (six
 # count assertions that were satisfied incidentally by the fixture rather than
 # by the notice they named) and F5 (the host declared as a hard dependency).
+#
+# 60 to 65 by closing D6, the one place X-006 recorded this package breaking its
+# own rule: the second and later addresses in a message were dropped without a
+# word. Five entries: the original silence, counting duplicates as further
+# accounts, the threshold moved off ONE, the count replaced by a word (F2's
+# shape against the new notice), and the refusal path dropping it while the
+# success path keeps it.
+#
+# 65 to 81 by a THIRD cold pass. Fifteen entries for F1, one per emitted value
+# that survived a source-side enumeration, and one for F2.
+#
+# What earned sixteen entries at once is the METHOD, and it is worth stating
+# because two earlier rounds looked harder at the same code and missed this.
+# Both of those enumerated from the TEST side: they read the assertions and
+# asked which were weak. That cannot find a value with no assertion at all,
+# because there is nothing to read. The third pass enumerated from the SOURCE
+# side instead, listing every interpolation the package emits into
+# ProviderResult.text and demanding each one be able to go red. 46 values, 15
+# survivors, and owner_count appeared ZERO times in the entire suite.
+#
+# The rule: the population to enumerate is what the code EMITS, not what the
+# tests already mention. An audit that starts from the tests can only ever grade
+# the tests that exist.
 #
 # If you lower this, say why in the commit message.

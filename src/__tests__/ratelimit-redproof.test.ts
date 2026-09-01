@@ -128,3 +128,64 @@ describe("pruneWindow keeps the entries that will still matter", () => {
     expect(checkRateLimit(stamps, now + N).ok, "the cap must survive pruning").toBe(false);
   });
 });
+
+// Both numbers this refusal emits survived a source-side enumeration: replacing
+// either with a word left the suite green. This is the one refusal in the
+// package an operator reads as an instruction ("wait a minute and retry"), and
+// nothing checked that either number described the limiter that produced it.
+//
+// Provider-reachable: the eleventh lookup inside one window produces exactly
+// this text, and it reaches the model.
+describe("the rate-limit refusal quotes the limiter that produced it", () => {
+  /** A history of N stamps one millisecond apart, ending just before `base + N`. */
+  const atCap = (base: number, count: number) => Array.from({ length: count }, (_, i) => base + i);
+
+  it("quotes the number of lookups it ACTUALLY allows", () => {
+    const first = checkRateLimit(atCap(1_000_000, N), 1_000_000 + N);
+    expect(first.ok, "the setup must actually be at the cap").toBe(false);
+    const quoted = first.ok ? null : first.message.match(/rate limit of (\d+) XRPL lookups/);
+    expect(quoted, "the refusal must quote a NUMBER of lookups").not.toBeNull();
+
+    const allowed = Number.parseInt(String(quoted?.[1]), 10);
+    expect(Number.isInteger(allowed) && allowed > 0, `quoted ${String(quoted?.[1])}`).toBe(true);
+
+    // The quoted number is the real boundary: one fewer passes, that many
+    // refuses. Comparing it to BOUNDS would pass for whatever BOUNDS held.
+    const base = 2_000_000;
+    expect(
+      checkRateLimit(atCap(base, allowed - 1), base + allowed).ok,
+      `${allowed - 1} lookups in the window must be permitted`,
+    ).toBe(true);
+    expect(
+      checkRateLimit(atCap(base, allowed), base + allowed).ok,
+      `${allowed} lookups in the window must be refused`,
+    ).toBe(false);
+  });
+
+  it("quotes the window it ACTUALLY enforces", () => {
+    const base = 1_000_000;
+    const stamps = atCap(base, N);
+    const first = checkRateLimit(stamps, base + N);
+    expect(first.ok, "the setup must actually be at the cap").toBe(false);
+    const quoted = first.ok ? null : first.message.match(/per (\d+) seconds/);
+    expect(quoted, "the refusal must quote a NUMBER of seconds").not.toBeNull();
+
+    const seconds = Number.parseInt(String(quoted?.[1]), 10);
+    expect(Number.isInteger(seconds) && seconds > 0, `quoted ${String(quoted?.[1])}`).toBe(true);
+
+    // One millisecond inside the quoted window the limiter is still closed.
+    expect(
+      checkRateLimit(stamps, base + seconds * 1000 - 1).ok,
+      `inside ${seconds}s the limiter must still refuse`,
+    ).toBe(false);
+    // Past it, with even the newest stamp expired, it has reopened.
+    expect(
+      checkRateLimit(stamps, base + N + seconds * 1000).ok,
+      `after ${seconds}s the limiter must have reopened`,
+    ).toBe(true);
+
+    // Rule 95: the window it quotes has to be the one BOUNDS actually holds,
+    // in the unit the sentence claims. Seconds, not milliseconds.
+    expect(seconds * 1000, "the quoted seconds must be the real window").toBe(W);
+  });
+});

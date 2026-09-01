@@ -104,6 +104,11 @@ says so when they do rather than presenting one index for both.
   Rows are dropped whole rather than cut, and the count that was dropped is
   stated as `trust_lines_size_capped`. `trust_lines_shown` always equals the
   number of rows actually printed.
+- One message gets one lookup. If it names several addresses, the first is
+  looked up and the rest are neither validated nor retrieved. That is stated as
+  `other_addresses_not_looked_up`, with a count, on a successful report and on a
+  refusal alike, so a report about one account never reads as an answer about
+  all of them.
 - The pinned node is a public endpoint operated by a third party. If it is
   withdrawn or degraded, lookups refuse.
 

@@ -337,7 +337,9 @@ const MUTATIONS: Mutation[] = [
   {
     id: "rp-lines-refusal-silenced",
     file: "src/provider.ts",
-    find: '    if ("ok" in linesResult && linesResult.ok === false) return speak(linesResult);',
+    // Search text updated when D6 gave speak() its second argument. The harness
+    // caught the drift itself rather than quietly testing nothing.
+    find: '    if ("ok" in linesResult && linesResult.ok === false) return speak(linesResult, skipped);',
     replace: '    if ("ok" in linesResult && linesResult.ok === false) return SILENT;',
     why: "THE headline hole: the whole second half of the lookup could fail and the provider contributed nothing",
   },
@@ -536,8 +538,9 @@ const MUTATIONS: Mutation[] = [
   {
     id: "f2-refusal-prefix-changed",
     file: "src/provider.ts",
-    find: "    text: `XRPL lookup refused. ${r.message}`,",
-    replace: "    text: `Lookup refused. ${r.message}`,",
+    // Search text updated when D6 appended the other-addresses notice here.
+    find: '    text: `XRPL lookup refused. ${r.message}${others === "" ? "" : ` ${others}`}`,',
+    replace: '    text: `Lookup refused. ${r.message}${others === "" ? "" : ` ${others}`}`,',
     why: 'runtime-integration asserted toContain("XRPL") on the prompt, and the test character is named "XRPL Test Agent", so it passed on the name',
   },
 
@@ -550,6 +553,191 @@ const MUTATIONS: Mutation[] = [
     find: '  "peerDependencies": {\n    "@elizaos/core": ">=2.0.3-beta.7 <3.0.0-0"\n  },',
     replace: '  "dependencies": {\n    "@elizaos/core": "2.0.3-beta.7"\n  },',
     why: "forces a beta this package never loads into every consumer's tree, and pins them to one build of the host that is loading it",
+  },
+
+  // ---------------------------------------------------------------------------
+  // D6. The one place X-006 recorded this package breaking its own rule, left
+  // open deliberately across two cold passes and closed on 2026-09-01.
+  //
+  // run() looks up candidates[0] and every other address in the message was
+  // dropped without a word, in a package where every other omission is counted.
+  // The lookup bound is unchanged; the silence is what was fixed.
+  // ---------------------------------------------------------------------------
+
+  {
+    id: "d6-other-addresses-uncounted",
+    file: "src/provider.ts",
+    find: "    const skipped = new Set(candidates.filter((c) => c !== first)).size;",
+    replace: "    const skipped = 0;",
+    why: "the original defect: a message naming five accounts produced a report about one and nothing said the other four existed",
+  },
+  {
+    id: "d6-other-addresses-counted-with-duplicates",
+    file: "src/provider.ts",
+    find: "    const skipped = new Set(candidates.filter((c) => c !== first)).size;",
+    replace: "    const skipped = candidates.length - 1;",
+    why: "the same address written twice was reported as a further account that was not looked up, and overstating an omission is the same inaccuracy as hiding one",
+  },
+  {
+    id: "d6-threshold-off-by-one",
+    file: "src/core/render.ts",
+    find: '  if (n === 0) return "";',
+    replace: '  if (n <= 1) return "";',
+    why: "X-006 puts the threshold at ONE: dropping exactly one address is the smallest case that must be reported, and it is the case a comfortable fixture never covers",
+  },
+  {
+    id: "d6-count-dropped-from-the-notice",
+    file: "src/core/render.ts",
+    find: "  return `other_addresses_not_looked_up: ${n}. The message held further text shaped like an XRPL address. Only the FIRST address was looked up; the rest were neither validated nor retrieved, so nothing in this report describes them.`;",
+    replace:
+      "  return `other_addresses_not_looked_up: some. The message held further text shaped like an XRPL address. Only the FIRST address was looked up; the rest were neither validated nor retrieved, so nothing in this report describes them.`;",
+    why: "F2's shape applied to the new notice: a count asserted against the whole report is satisfied by any stray digit in the fixture",
+  },
+  {
+    id: "d6-refusal-drops-the-notice",
+    file: "src/provider.ts",
+    find: '    text: `XRPL lookup refused. ${r.message}${others === "" ? "" : ` ${others}`}`,',
+    replace: "    text: `XRPL lookup refused. ${r.message}`,",
+    why: "a refusal about the FIRST address, in a message naming several, reads as an answer about all of them unless the rest are counted out loud",
+  },
+
+  // -------------------------------------------------------------------------
+  // F1 and F2 from the third cold pass, and the method matters more than the
+  // sixteen entries.
+  //
+  // The first two audits looked for WEAK assertions. This one enumerated from
+  // the SOURCE side: every interpolation the package emits into
+  // ProviderResult.text, replaced one at a time with a word that could not
+  // appear otherwise, suite run, red required. 46 emitted values, 15 survived.
+  //
+  // Four of the fifteen were not weak assertions. There were NO assertions:
+  // `owner_count` and `account_sequence` appeared ZERO times in the suite and
+  // in checks/, so the report could have printed anything for either. No
+  // test-side reading finds that class, because the population to enumerate is
+  // what the code EMITS, not what the tests already mention.
+  //
+  // The other eleven were all in refusal MESSAGES, which is the only text the
+  // model gets when a lookup does not succeed, and which no earlier round had
+  // treated as report content at all.
+  //
+  // Each entry below wordifies one emitted value. `<unavailable>` is preserved
+  // where the renderer has that branch, so the mutation changes the NUMBER and
+  // nothing else.
+  // -------------------------------------------------------------------------
+  {
+    id: "f1-owner-count-unread",
+    file: "src/core/render.ts",
+    find: "out.push(`  owner_count: ${renderCount(input?.ownerCount)}`);",
+    replace:
+      'out.push(`  owner_count: ${renderCount(input?.ownerCount) === "<unavailable>" ? "<unavailable>" : "NINETEEN"}`);',
+    why: "owner_count appeared ZERO times in the suite, so the report could print any value for it and stay green",
+  },
+  {
+    id: "f1-account-sequence-unread",
+    file: "src/core/render.ts",
+    find: "out.push(`  account_sequence: ${renderCount(input?.sequence)}`);",
+    replace:
+      'out.push(`  account_sequence: ${renderCount(input?.sequence) === "<unavailable>" ? "<unavailable>" : "NINETEEN"}`);',
+    why: "account_sequence appeared ZERO times in the suite, same class as owner_count",
+  },
+  {
+    id: "f1-size-cap-denominator-unread",
+    file: "src/core/render.ts",
+    find: "of the ${rows.length} trust lines that would otherwise",
+    replace: "of the NINETEEN trust lines that would otherwise",
+    why: "the size-cap notice could read '11 of the NINETEEN' while shown said 14 and returned said 26, and nothing added the three up",
+  },
+  {
+    id: "f1-size-cap-ceiling-unread",
+    file: "src/core/render.ts",
+    find: "inside its ${BOUNDS.MAX_RENDERED_CHARS} character size cap",
+    replace: "inside its NINETEEN character size cap",
+    why: "the notice named a character ceiling nothing checked against the bound the report actually respects",
+  },
+  {
+    id: "f1-refusal-fallback-code-unread",
+    file: "src/core/result.ts",
+    find: 'message: text === "" ? `Refused: ${code}.` : text',
+    replace: 'message: text === "" ? `Refused: ZZQQXX.` : text',
+    why: "the fallback exists so a blank refusal still names itself, and the one identifying detail in it was read by nothing",
+  },
+  {
+    id: "f1-address-length-unread",
+    file: "src/core/address.ts",
+    find: "`The XRPL address was ${input.length} characters,",
+    replace: "`The XRPL address was NINETEEN characters,",
+    why: "the length refusal could quote any number for the string it refused; unreachable through the provider, reachable through the export",
+  },
+  {
+    id: "f1-address-range-min-unread",
+    file: "src/core/address.ts",
+    find: "outside the valid range of ${MIN_LENGTH} to ${MAX_LENGTH},",
+    replace: "outside the valid range of NINETEEN to ${MAX_LENGTH},",
+    why: "the quoted lower bound was never checked against the boundary the validator actually enforces",
+  },
+  {
+    id: "f1-address-range-max-unread",
+    file: "src/core/address.ts",
+    find: "outside the valid range of ${MIN_LENGTH} to ${MAX_LENGTH},",
+    replace: "outside the valid range of ${MIN_LENGTH} to NINETEEN,",
+    why: "the quoted upper bound was never checked against the boundary the validator actually enforces",
+  },
+  {
+    id: "f1-node-url-protocol-unread",
+    file: "src/core/node-url.ts",
+    find: "`The XRPL node URL used ${url.protocol} rather than https, so it was refused.`",
+    replace: "`The XRPL node URL used ZZQQXX rather than https, so it was refused.`",
+    why: "M-4's guard could misreport which scheme it refused, so its output could not be audited",
+  },
+  {
+    id: "f1-node-url-port-unread",
+    file: "src/core/node-url.ts",
+    find: "`The XRPL node URL used port ${url.port}, which is not on the allowlist, so it was refused.`",
+    replace:
+      "`The XRPL node URL used port NINETEEN, which is not on the allowlist, so it was refused.`",
+    why: "same, for the port half of the allowlist",
+  },
+  {
+    id: "f1-rate-limit-max-unread",
+    file: "src/core/ratelimit.ts",
+    find: "`This plugin's rate limit of ${BOUNDS.RATE_LIMIT_MAX_REQUESTS} XRPL lookups",
+    replace: "`This plugin's rate limit of NINETEEN XRPL lookups",
+    why: "provider-reachable on the eleventh lookup in a window; the number an operator reads as 'how many am I allowed' was pinned by nothing",
+  },
+  {
+    id: "f1-rate-limit-window-unread",
+    file: "src/core/ratelimit.ts",
+    find: "XRPL lookups per ${seconds} seconds has been reached",
+    replace: "XRPL lookups per NINETEEN seconds has been reached",
+    why: "the number an operator reads as 'how long do I wait', in seconds, against a window held in milliseconds",
+  },
+  {
+    id: "f1-http-status-unread",
+    file: "src/transport/client.ts",
+    find: "`The XRPL node answered with HTTP ${res.status}, so no ledger data was retrieved.`",
+    replace: "`The XRPL node answered with HTTP NINETEEN, so no ledger data was retrieved.`",
+    why: "provider-reachable on any non-200; the only diagnostic in the message could be any fixed string",
+  },
+  {
+    id: "f1-request-timeout-unread",
+    file: "src/transport/client.ts",
+    find: "? `The XRPL node did not answer within ${timeoutMs}ms,",
+    replace: "? `The XRPL node did not answer within NINETEENms,",
+    why: "provider-reachable on every timeout; the reported wait was never compared to the wait actually configured",
+  },
+  {
+    id: "f1-outer-catch-error-name-unread",
+    file: "src/provider.ts",
+    find: 'error instanceof Error ? error.name : "unknown error"',
+    replace: 'error instanceof Error ? "ZZQQXX" : "unknown error"',
+    why: "invariant 1's last line of defence had a test proving it SPEAKS and none reading what it said",
+  },
+  {
+    id: "f2-duplicate-later-address-counted-twice",
+    file: "src/provider.ts",
+    find: "    const skipped = new Set(candidates.filter((c) => c !== first)).size;",
+    replace: "    const skipped = candidates.filter((c) => c !== first).length;",
+    why: "finer than d6-other-addresses-counted-with-duplicates, which the [A, A] test catches because both forms give 0 there. [A, B, B] gives 1 shipped and 2 here, and overstating an omission is the same inaccuracy as hiding one",
   },
 ];
 

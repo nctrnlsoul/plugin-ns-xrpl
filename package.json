@@ -9,7 +9,7 @@
   "packageType": "plugin",
   "platform": "node",
   "license": "MIT",
-  "author": "nctrnlsoul",
+  "author": "Brian Araujo <nctrnlsoul@users.noreply.github.com>",
   "keywords": [
     "plugin",
     "elizaos",

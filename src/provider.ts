@@ -28,7 +28,7 @@ import { ADDRESS_CANDIDATE_PATTERN, validateXrplAddress } from "./core/address.t
 import { BOUNDS } from "./core/bounds.ts";
 import { XRPL_NODE_URL } from "./core/node-url.ts";
 import { checkRateLimit, pruneWindow } from "./core/ratelimit.ts";
-import { renderAccountReport } from "./core/render.ts";
+import { renderAccountReport, renderOtherAddressesNotice } from "./core/render.ts";
 import {
   type AccountInfo,
   type TrustLine,
@@ -52,10 +52,18 @@ export interface XrplProviderDeps {
   readonly totalBudgetMs: number;
 }
 
-/** Turn a refusal into a ProviderResult the model will actually see. */
-function speak(r: Refusal): ProviderResult {
+/**
+ * Turn a refusal into a ProviderResult the model will actually see.
+ *
+ * `otherAddresses` is how many further addresses the message held that this
+ * lookup never used. A refusal carries it for the same reason the report does:
+ * "that address was refused" in a message naming three reads as an answer about
+ * all three, and D6 is exactly that omission going unspoken.
+ */
+function speak(r: Refusal, otherAddresses: number): ProviderResult {
+  const others = renderOtherAddressesNotice(otherAddresses);
   return {
-    text: `XRPL lookup refused. ${r.message}`,
+    text: `XRPL lookup refused. ${r.message}${others === "" ? "" : ` ${others}`}`,
     values: { xrplLookup: "refused", xrplRefusalCode: r.code },
     data: { ok: false, code: r.code },
   };
@@ -187,12 +195,25 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
 
     const first = candidates[0];
     if (first === undefined) return SILENT;
+
+    // D6, the one place X-006 recorded this package breaking its own rule. Only
+    // the FIRST address is ever looked up and the rest were dropped in silence.
+    //
+    // DISTINCT strings, so the same address written twice is not reported as a
+    // second account: overstating an omission is the same class of inaccuracy
+    // as hiding one, in a report whose only job is to be accurate.
+    //
+    // NOT validated, because they were never looked at. "How many were skipped"
+    // is a smaller claim than "how many were real", and it is the claim this
+    // code can actually support.
+    const skipped = new Set(candidates.filter((c) => c !== first)).size;
+
     const address = validateXrplAddress(first);
-    if (!address.ok) return speak(address);
+    if (!address.ok) return speak(address, skipped);
 
     const now = deps.now();
     const limit = checkRateLimit(stamps, now);
-    if (!limit.ok) return speak(limit);
+    if (!limit.ok) return speak(limit, skipped);
     stamps = pruneWindow([...stamps, now], now);
 
     const budget = makeBudget();
@@ -202,13 +223,13 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
       { account: address.value, ledger_index: "validated" },
       { fetchImpl: deps.fetchImpl, nodeUrl: deps.nodeUrl, timeoutMs: budget.next() },
     );
-    if (!rawInfo.ok) return speak(rawInfo);
+    if (!rawInfo.ok) return speak(rawInfo, skipped);
 
     const info = validateAccountInfoResponse(rawInfo.value, address.value);
-    if (!info.ok) return speak(info);
+    if (!info.ok) return speak(info, skipped);
 
     const linesResult = await fetchLines(address.value, budget);
-    if ("ok" in linesResult && linesResult.ok === false) return speak(linesResult);
+    if ("ok" in linesResult && linesResult.ok === false) return speak(linesResult, skipped);
     const { lines, moreAvailable, droppedLines, ledgerIndex, ledgerIndexVaried } =
       linesResult as LinesResult;
 
@@ -226,6 +247,7 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
         droppedLines,
         linesLedgerIndex: ledgerIndex,
         linesLedgerVaried: ledgerIndexVaried,
+        otherAddressesNotLookedUp: skipped,
       }),
       values: {
         xrplLookup: "ok",
@@ -250,6 +272,11 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
       } catch (error) {
         // The last line of defence. Anything escaping above would otherwise be
         // swallowed by the runtime and become silence.
+        //
+        // Zero further addresses, because nothing here knows: run() can throw
+        // before it has read the message at all, and one of the tests below
+        // makes content.text itself throw. Saying nothing about other addresses
+        // is the only claim this branch can support.
         return speak(
           refuse(
             "INTERNAL_ERROR",
@@ -257,6 +284,7 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
               error instanceof Error ? error.name : "unknown error"
             }).`,
           ),
+          0,
         );
       }
     },

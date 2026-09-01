@@ -1,4 +1,4 @@
-225
+256
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -19,6 +19,40 @@
 # last row mid-value), F2 (the counts inside the notices were asserted only
 # against the whole report, so an unrelated digit in the fixture satisfied them)
 # and F5 (the host declared as a hard dependency it never loads).
+#
+# Raised from 225 to 241 by closing D6, the last omission in this package that
+# was not stated: run() looks up the FIRST address in a message and every other
+# one was dropped in silence. Six tests over the renderer's notice (threshold at
+# ONE, the count anchored to its own line, the two negative controls, the "never
+# validated" wording, and the notice being paid for inside the size cap) and ten
+# over the provider (the threshold, a multi-address count, the refusal path, the
+# node-failure path, both single-address negative controls, the duplicate case,
+# the unvalidated-candidate case, proof the other addresses still never reach
+# the network, and a setup proof that the four fixture addresses are what the
+# file claims).
+#
+# Raised from 241 to 256 by a THIRD cold pass, which disproved the same claim
+# again and wider, by changing the method rather than looking harder. It
+# enumerated from the SOURCE side: every value the package interpolates into
+# ProviderResult.text, replaced one at a time with a word that could not appear
+# otherwise, suite run, red required. 46 emitted values. FIFTEEN survived.
+#
+# Four were not weak assertions, they were absent ones: owner_count and
+# account_sequence appeared ZERO times in the whole suite and in checks/, and
+# the size-cap notice's denominator and character ceiling were never read. The
+# other eleven were in refusal MESSAGES, which is the only text the model gets
+# when a lookup fails, and which no earlier round had treated as report content.
+#
+# Fifteen tests: owner_count and account_sequence read back from their own lines
+# with the <unavailable> branch; the size-cap denominator proved by shown +
+# capped adding up to it; the stated ceiling proved to be the binding constraint
+# by showing one more row would not have fit; the address length and the two
+# range bounds tied to the boundary the validator really enforces; the node URL
+# port and scheme quoted back; the rate limit's count and window proved against
+# the limiter that produced them; the HTTP status and the request timeout driven
+# through the provider at two values each; the outer catch's error name; the
+# blank-refusal fallback naming its real code; and F2, a later address repeated,
+# which [A, A] cannot distinguish and [A, B, B] can.
 #
 # See also checks/mutation_count_floor.txt, which is this same idea one layer
 # out: this file stops the suite losing tests, that one stops the harness losing

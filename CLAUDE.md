@@ -86,6 +86,17 @@ completely.
    removed rather than filtered.
 10. **Truncation is always spoken.** Any omitted trust line, for any reason, is
     counted and reported. A shortened list must never read as a complete one.
+    This holds one level up too: a message may name several addresses and only
+    the FIRST is ever looked up, so the rest are counted and stated as
+    `other_addresses_not_looked_up`, on the success path and on every refusal
+    `run()` produces. Threshold of one, and DISTINCT strings, because
+    overstating an omission is the same inaccuracy as hiding one. That was D6,
+    and it was the last omission here that said nothing.
+    - One deliberate exception, and it must stay one: the outer `catch` in
+      `src/provider.ts` passes zero, because `run()` can throw before it has
+      read the message at all. Saying nothing about other addresses is the only
+      claim that branch can support. Do not "fix" it into reporting a count
+      nothing measured.
 11. **No secrets, ever.** This package has no API key, no environment variable
     and no `.env`. If that ever changes, the value lives in an OS environment
     variable and is never pasted into chat, a command, or a file.
@@ -145,6 +156,22 @@ Three rules follow, and they are cheap:
    should trip a notice is one.
 3. **Assert the positive property where one exists.** "Does not contain IGNORE"
    is weaker than "contains only `[0-9A-F]`".
+
+A third pass added a fourth. It is about where an audit STARTS, not how hard it
+looks.
+
+4. **Enumerate from the SOURCE side, not the test side.** The population is what
+   the code EMITS, not what the tests already mention. Starting from the
+   assertions can only grade the assertions that exist and cannot see a value
+   with no assertion at all: `owner_count` and `account_sequence` appeared
+   **zero** times across the whole suite and every file under `checks/`. Both
+   rounds above hunted weak assertions here and neither saw them. 46 emitted
+   values, 15 survivors. Nothing in `bun run verify` does this for you.
+
+**The corollary the three above miss: a refusal message IS report content.**
+Eleven of the fifteen were there, never audited as output because it does not
+look like the report. It is the only text the model gets when a lookup fails, so
+a wrong number in it has no successful report beside it to contradict it.
 
 Two findings were defects in the code rather than in its tests, and both are
 worth remembering because neither would fail anything:
