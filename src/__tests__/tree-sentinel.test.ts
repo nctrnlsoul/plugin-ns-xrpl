@@ -306,6 +306,130 @@ describe("both scripts run the precondition before they touch anything", () => {
   const ROOT = join(import.meta.dirname, "..", "..");
   const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
+  /**
+   * Blank every comment and string literal, keeping length and line breaks so
+   * indices still line up with the original.
+   *
+   * This is not tidiness. checks/mutations.ts is a table of source fragments
+   * QUOTED AS DATA, so the moment the wiring below got its own mutation entries
+   * the file began containing the literal text `if (staleTree !== null) {`
+   * inside a `find:` string, ABOVE the real wiring. The first version of these
+   * assertions matched that quotation, walked its braces, and failed. It could
+   * equally have passed against a file whose wiring had been deleted, as long
+   * as an entry still quoted it.
+   *
+   * An assertion about CODE has to be made against code.
+   */
+  const codeOnly = (src: string): string => {
+    let out = "";
+    let i = 0;
+    while (i < src.length) {
+      const two = src.slice(i, i + 2);
+      if (two === "//") {
+        while (i < src.length && src[i] !== "\n") {
+          out += " ";
+          i++;
+        }
+        continue;
+      }
+      if (two === "/*") {
+        while (i < src.length && src.slice(i, i + 2) !== "*/") {
+          out += src[i] === "\n" ? "\n" : " ";
+          i++;
+        }
+        out += "  ";
+        i += 2;
+        continue;
+      }
+      const c = src[i];
+      if (c === '"' || c === "'" || c === "`") {
+        out += " ";
+        i++;
+        while (i < src.length) {
+          if (src[i] === "\\") {
+            out += "  ";
+            i += 2;
+            continue;
+          }
+          if (src[i] === c) {
+            out += " ";
+            i++;
+            break;
+          }
+          out += src[i] === "\n" ? "\n" : " ";
+          i++;
+        }
+        continue;
+      }
+      out += c;
+      i++;
+    }
+    return out;
+  };
+
+  /**
+   * The brace-matched block starting at the first `{` at or after `from`.
+   *
+   * Counting braces rather than regexing to a closing line, because "the exit
+   * is somewhere later in the file" is exactly the thing this must not accept.
+   * Run over codeOnly output, so a brace inside a string cannot skew the count.
+   */
+  const blockAfter = (src: string, from: number): string | null => {
+    const open = src.indexOf("{", from);
+    if (open < 0) return null;
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") {
+        depth--;
+        if (depth === 0) return src.slice(open, i + 1);
+      }
+    }
+    return null;
+  };
+
+  /**
+   * The refusal must be BOUND, TESTED and ACTED ON.
+   *
+   * The first version of these tests asserted only that the call existed and
+   * came before the snapshot. `staleSentinelRefusal(ROOT);` on a line of its
+   * own satisfies both and refuses nothing at all: the guard runs, computes the
+   * right answer, and drops it. That is the shape a check like this fails in,
+   * and it is invisible to "does the call exist".
+   */
+  const actsOnTheRefusal = (raw: string, label: string) => {
+    const src = codeOnly(raw);
+
+    // 1. BOUND. A bare call statement cannot match this.
+    const bind = src.match(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*staleSentinelRefusal\(/);
+    expect(bind, `${label} must BIND the refusal, not discard it`).not.toBeNull();
+    const name = bind?.[1] ?? "";
+    expect(name, `${label} must bind to a name`).not.toBe("");
+
+    // 2. TESTED, and with the polarity that refuses when there IS a refusal.
+    //    `if (x === null)` binds, tests and exits, and would block a clean tree
+    //    while sailing straight past a poisoned one. Pinned by form, not by
+    //    execution, and that limit is real.
+    const cond = new RegExp(`if\\s*\\(\\s*${name}\\s*(?:!==?\\s*null|\\)|&&)`);
+    const tested = src.search(cond);
+    expect(tested, `${label} must TEST ${name}, and must not invert the test`).toBeGreaterThan(-1);
+    expect(tested, `${label} must test ${name} after binding it`).toBeGreaterThan(
+      bind?.index ?? -1,
+    );
+
+    // 3. EXITS NON-ZERO, inside the block that did the testing. Not later, not
+    //    somewhere else in the file.
+    const block = blockAfter(src, tested);
+    expect(block, `${label} the tested block must be matchable`).not.toBeNull();
+    expect(
+      (block ?? "").length,
+      `${label} matched block must be a block, not the rest of the file`,
+    ).toBeLessThan(1200);
+    expect(block ?? "", `${label} must exit non-zero INSIDE the block that tested it`).toContain(
+      "process.exit(1)",
+    );
+  };
+
   it("check.ts refuses before it runs a single step", () => {
     const src = read("check.ts");
     const call = src.indexOf("staleSentinelRefusal(");
@@ -332,5 +456,48 @@ describe("both scripts run the precondition before they touch anything", () => {
     const firstRun = src.indexOf("runSuite()");
     expect(firstRun).toBeGreaterThan(-1);
     expect(call, "and before the baseline run").toBeLessThan(firstRun);
+  });
+
+  it("POSITIVE CONTROL: the wiring assertion cannot be satisfied by a QUOTATION", () => {
+    // Rule 24, the instrument checked before its output is believed. This is
+    // the exact way the assertion first went wrong: checks/mutations.ts quotes
+    // the wiring as data in its `find:` fields, so a file that only MENTIONS
+    // the guard must not read as a file that runs it.
+    const quotedOnly = [
+      "const MUTATIONS = [",
+      "  {",
+      '    find: "const stale = staleSentinelRefusal(ROOT);",',
+      '    replace: "if (stale !== null) { process.exit(1); }",',
+      "  },",
+      "];",
+      "// const stale = staleSentinelRefusal(ROOT); in a comment does not count",
+      "runTheGateWithoutChecking();",
+    ].join("\n");
+    expect(() => actsOnTheRefusal(quotedOnly, "quotation-only")).toThrow();
+
+    // And the control's control: the same assertion passes on real wiring, so
+    // the throw above is about the quoting and not about the helper refusing
+    // everything.
+    const realWiring = [
+      'import { staleSentinelRefusal } from "./checks/tree_sentinel.ts";',
+      "const stale = staleSentinelRefusal(ROOT);",
+      "if (stale !== null) {",
+      "  console.log(stale);",
+      "  process.exit(1);",
+      "}",
+    ].join("\n");
+    expect(() => actsOnTheRefusal(realWiring, "real-wiring")).not.toThrow();
+  });
+
+  it("check.ts BINDS the refusal, TESTS it, and exits inside that block", () => {
+    actsOnTheRefusal(read("check.ts"), "check.ts");
+  });
+
+  it("checks/mutations.ts BINDS the refusal, TESTS it, and exits inside that block", () => {
+    // Stated separately from check.ts rather than swept over both, because a
+    // rule enforced by one loop over two files is a rule nobody notices losing
+    // a file. This repo has already paid for that once: the invisible-character
+    // rule was absolute and its enforcement covered eight files.
+    actsOnTheRefusal(read("checks/mutations.ts"), "checks/mutations.ts");
   });
 });

@@ -1,4 +1,4 @@
-86
+92
 # The number of mutation entries that must exist in checks/mutations.ts.
 #
 # Same job as checks/test_count_floor.txt, one layer out. That file stops the
@@ -53,5 +53,26 @@
 # minute. A guard that wrongly PASSES lets this harness snapshot a poisoned file
 # as "the original", restore to it, grade every entry in this file against it,
 # and print "all files restored byte-identical" over the top.
+#
+# 86 to 92 for the WIRING of that precondition, which is a different thing from
+# the precondition working. Its first structural test asserted the call exists
+# and precedes the snapshot, and `staleSentinelRefusal(ROOT);` alone on a line
+# satisfies both while refusing nothing.
+#
+# Three shapes across both scripts: the result discarded, the test inverted, the
+# exit removed. Stated per script rather than swept over both, because a rule
+# enforced by one loop over two files is a rule nobody notices losing a file.
+#
+# This is also where check.ts and checks/mutations.ts became TARGETS, which has
+# a second effect worth knowing: TARGETS is what the sentinel records, so the
+# two scripts that run the gate are now watched by it too, not just the source
+# they grade.
+#
+# One entry of the six had to be written twice, and the reason generalises. This
+# file is the only target that QUOTES its own targets, so a single-line anchor
+# like `if (staleTree !== null) {` matched both the code and its own `find:`
+# string, and the harness correctly refused it as STALE. The fix is a two-line
+# anchor: a real newline cannot survive inside the quotation, where it is stored
+# as a backslash and an n.
 #
 # If you lower this, say why in the commit message.

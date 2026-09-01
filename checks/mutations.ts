@@ -801,6 +801,74 @@ const MUTATIONS: Mutation[] = [
     replace: "  return true;",
     why: "clearing the sentinel after a restore that FAILED hands the next run a poisoned tree with nothing left to warn it, which is the incident all over again one step later",
   },
+
+  // -------------------------------------------------------------------------
+  // The WIRING of the precondition, which is a different thing from the
+  // precondition working.
+  //
+  // The first version of those tests asserted the call EXISTS and comes before
+  // the snapshot. `staleSentinelRefusal(ROOT);` on a line of its own satisfies
+  // both and refuses nothing: the guard runs, computes the right answer, and
+  // drops it. A checked value that nothing acts on is the same shape as a
+  // count nothing reads, one layer out from F1.
+  //
+  // Six entries, three shapes across both scripts, because a rule enforced by
+  // one sweep over two files is a rule nobody notices losing a file. This repo
+  // has already paid for that: the invisible-character rule was absolute and
+  // its enforcement covered eight of the ten files it applied to.
+  //
+  // A side effect worth knowing: naming check.ts and checks/mutations.ts here
+  // puts them in TARGETS, so the sentinel now records and watches the two
+  // scripts that run the gate, not just the source they grade.
+  // -------------------------------------------------------------------------
+  {
+    id: "gate-refusal-result-discarded",
+    file: "check.ts",
+    find: "const stale = staleSentinelRefusal(ROOT);",
+    replace: "staleSentinelRefusal(ROOT);\nconst stale = null;",
+    why: "the gate computes the refusal and drops it, which passes any assertion that only asks whether the call is there",
+  },
+  {
+    id: "gate-refusal-test-inverted",
+    file: "check.ts",
+    find: "if (stale !== null) {",
+    replace: "if (stale === null) {",
+    why: "binds, tests and exits, and blocks a CLEAN tree while sailing straight past a poisoned one",
+  },
+  {
+    id: "gate-refusal-does-not-exit",
+    file: "check.ts",
+    find: 'GATE REFUSED TO START. Nothing was measured.");\n  process.exit(1);',
+    replace: 'GATE REFUSED TO START. Nothing was measured.");',
+    why: "prints the refusal and then measures the tree anyway, which is the warn-and-carry-on shape that reads as a control and is not one",
+  },
+  // These two anchors span TWO LINES, and that is not style. This file is the
+  // only target that quotes its own targets: `find: "if (staleTree !== null) {"`
+  // is itself a line of this file, so the single-line anchor matched twice and
+  // the harness correctly called it STALE. A real newline cannot appear inside
+  // the quotation, where it is stored as a backslash and an n, so a two-line
+  // span is unambiguous. Measured before it was written, not after it broke.
+  {
+    id: "harness-refusal-result-discarded",
+    file: "checks/mutations.ts",
+    find: "const staleTree = staleSentinelRefusal(ROOT);\nif (staleTree !== null) {",
+    replace: "staleSentinelRefusal(ROOT);\nconst staleTree = null;\nif (staleTree !== null) {",
+    why: "the harness computes the refusal and drops it, then snapshots a poisoned file as the original",
+  },
+  {
+    id: "harness-refusal-test-inverted",
+    file: "checks/mutations.ts",
+    find: "if (staleTree !== null) {\n  console.log(staleTree);",
+    replace: "if (staleTree === null) {\n  console.log(staleTree);",
+    why: "refuses on a clean tree and grades every entry in this file against a poisoned one",
+  },
+  {
+    id: "harness-refusal-does-not-exit",
+    file: "checks/mutations.ts",
+    find: 'A poisoned baseline grades nothing.");\n  process.exit(1);',
+    replace: 'A poisoned baseline grades nothing.");',
+    why: "warns, then snapshots the poisoned tree anyway and prints all files restored byte-identical over the top",
+  },
 ];
 
 // ---------------------------------------------------------------------------

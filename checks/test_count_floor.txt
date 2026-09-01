@@ -1,4 +1,4 @@
-273
+276
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -74,6 +74,21 @@
 # and checks/mutations.ts both run this suite, so spawning either from inside it
 # recurses, and under the mutation that removes the guard it would recurse
 # without bound.
+#
+# Raised from 273 to 276 because those two structural tests were too weak on
+# their first pass. They asserted the call EXISTS and precedes the snapshot,
+# which `staleSentinelRefusal(ROOT);` on a line of its own satisfies while
+# refusing nothing: the guard runs, computes the right answer, and drops it. A
+# checked value nothing acts on is F1 one layer out.
+#
+# Three tests. Two assert, per script, that the result is BOUND, that it is
+# TESTED with the polarity that refuses on a refusal (`if (x === null)` binds,
+# tests and exits, and would block a clean tree while passing a poisoned one),
+# and that a process.exit(1) sits inside the brace-matched block that did the
+# testing. The third is the instrument check: those assertions run over source
+# with comments and string literals blanked out, because checks/mutations.ts
+# quotes the very wiring it mutates, and the first version of the assertion
+# matched an entry's `find:` string instead of the code.
 #
 # See also checks/mutation_count_floor.txt, which is this same idea one layer
 # out: this file stops the suite losing tests, that one stops the harness losing
