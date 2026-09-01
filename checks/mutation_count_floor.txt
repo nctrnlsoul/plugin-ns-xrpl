@@ -1,4 +1,4 @@
-92
+100
 # The number of mutation entries that must exist in checks/mutations.ts.
 #
 # Same job as checks/test_count_floor.txt, one layer out. That file stops the
@@ -74,5 +74,43 @@
 # string, and the harness correctly refused it as STALE. The fix is a two-line
 # anchor: a real newline cannot survive inside the quotation, where it is stored
 # as a backslash and an n.
+#
+# 92 to 100 after a FOURTH cold pass DISPROVED the wiring assertion those six
+# entries were written to protect. It built two check.ts files that satisfy the
+# assertion while the gate never calls the guard, and measured both end to end:
+# full suite green, and the gate running five steps over a poisoned tree instead
+# of refusing to start.
+#
+# The lesson is one sentence and it is not about regex literals. The assertion
+# was reading the file for a SHAPE and calling that a control, and a shape can be
+# written down without being run. Three ways it can be, and all three were live:
+#
+#   quoted as a regex   codeOnly blanked comments and string literals, which are
+#                       two of the three ways to write characters down without
+#                       executing them. A regex literal is the third.
+#   defined not called  the guard moved into an exported function with no call
+#                       site. tsc, biome and every test stayed green.
+#   located by prose    the ordering anchored on the first mention anywhere in
+#                       the file. This file mentions the call in a comment at
+#                       line 810 and makes it at line 902, so "before the
+#                       snapshot" was being proved by a comment.
+#
+# Five entries for those three, stated per script for the two that have a script
+# each, because a rule enforced by one loop over two files is a rule nobody
+# notices losing a file.
+#
+# Three more for checks/tree_sentinel.ts, from a SOURCE-side enumeration of that
+# file rather than of the report: an empty sentinel file reading as absent, which
+# is exactly what a kill during writeFileSync leaves; readSentinel's catch
+# branch, which no test had ever reached; and the refusal suppressed when nothing
+# drifted, a property asserted on describeStaleSentinel and never on
+# staleSentinelRefusal, which is the function both scripts actually call. The
+# shipped behaviour was right in all three. Nothing held it there.
+#
+# One survivor from that enumeration is deliberately NOT fixed and is recorded
+# here so the next pass does not rediscover it as new: accepting a target with an
+# empty recorded sha256. An empty hash can never equal a real one, so every
+# target reads as drifted. It degrades the message rather than failing open,
+# which is the direction that costs a minute rather than a release.
 #
 # If you lower this, say why in the commit message.

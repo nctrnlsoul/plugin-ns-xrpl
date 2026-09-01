@@ -1,4 +1,4 @@
-276
+283
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -89,6 +89,34 @@
 # with comments and string literals blanked out, because checks/mutations.ts
 # quotes the very wiring it mutates, and the first version of the assertion
 # matched an entry's `find:` string instead of the code.
+#
+# Raised from 276 to 283 because a FOURTH cold pass DISPROVED those three. It
+# built two check.ts files that satisfy the wiring assertion while the gate never
+# calls the guard, and measured both: full suite green, and the gate running five
+# steps over a poisoned tree instead of refusing to start.
+#
+# The assertion was reading the file for a SHAPE and calling that a control. A
+# shape can be written down without being run, three ways, and all three worked:
+# quoted as a regex literal (codeOnly blanked comments and strings and knew
+# nothing about the third notation), defined but never called (the guard moved
+# into an exported function, with tsc and biome and every test still green), and
+# located by prose (the ordering anchored on the first mention anywhere in the
+# file, and checks/mutations.ts mentions the call in a comment at line 810 and
+# makes it at line 902).
+#
+# Four tests for that: a regex-quoted file must be refused, a DIVISION must not
+# be swallowed as a regex (check.ts really divides, and a lexer that guesses
+# regex every time would blank real wiring and turn this into an alarm that fires
+# on correct code), a guard inside a function nothing calls must be refused, and
+# the ordering must be measured from the CALL rather than from a comment.
+#
+# Three more for checks/tree_sentinel.ts, from enumerating that file's own
+# decisions rather than the report's values: an EMPTY sentinel file is unreadable
+# rather than absent, which is exactly what a kill during writeFileSync leaves; a
+# sentinel that exists and cannot be read is unreadable, which is readSentinel's
+# catch branch and had no test at all; and staleSentinelRefusal itself refuses
+# when nothing drifted, a property that was asserted one layer down on
+# describeStaleSentinel and not on the function both scripts actually call.
 #
 # See also checks/mutation_count_floor.txt, which is this same idea one layer
 # out: this file stops the suite losing tests, that one stops the harness losing

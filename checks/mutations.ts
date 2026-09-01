@@ -869,6 +869,104 @@ const MUTATIONS: Mutation[] = [
     replace: 'A poisoned baseline grades nothing.");',
     why: "warns, then snapshots the poisoned tree anyway and prints all files restored byte-identical over the top",
   },
+
+  // -------------------------------------------------------------------------
+  // A FOURTH cold pass, which DISPROVED the wiring assertion above by building
+  // two check.ts files that satisfy it while the gate never calls the guard.
+  // Both were measured end to end, not argued: full suite green, and the gate
+  // running five steps over a poisoned tree instead of refusing to start.
+  //
+  // The shape behind all three fixes is one sentence. The assertion was reading
+  // the file for a SHAPE and calling that a control, and a shape can be written
+  // down without being run. Three ways it can be:
+  //
+  //   quoted as a regex   codeOnly blanked comments and strings and knew
+  //                       nothing about regex literals, so a third notation for
+  //                       the same characters read straight through as code.
+  //   defined not called  the guard moved into an exported function with no
+  //                       call site. tsc, biome and 283 tests all green.
+  //   located by prose    the ordering anchored on the first mention anywhere
+  //                       in the file, and checks/mutations.ts mentions the
+  //                       call in a comment at line 810 and makes it at 902.
+  //
+  // Stated per script rather than swept over both, for the reason the entries
+  // above give: a rule enforced by one loop over two files is a rule nobody
+  // notices losing a file.
+  // -------------------------------------------------------------------------
+  {
+    id: "wiring-regex-quotation-reads-as-code",
+    file: "src/__tests__/tree-sentinel.test.ts",
+    find: "        if (regexAllowed) {",
+    replace: "        if (false) {",
+    why: "with regex literals no longer blanked, a file that only QUOTES the wiring as two patterns satisfies the assertion, which is how a cold pass got the gate to run five steps over a poisoned tree",
+  },
+  {
+    id: "gate-guard-moved-into-a-function",
+    file: "check.ts",
+    find: 'const stale = staleSentinelRefusal(ROOT);\nif (stale !== null) {\n  console.log(stale);\n  console.log("\\nGATE REFUSED TO START. Nothing was measured.");\n  process.exit(1);\n}',
+    replace:
+      'export function refuseIfTreeIsStale(): void {\n  const stale = staleSentinelRefusal(ROOT);\n  if (stale !== null) {\n    console.log(stale);\n    console.log("\\nGATE REFUSED TO START. Nothing was measured.");\n    process.exit(1);\n  }\n}',
+    why: "every line of the guard present, correct and above the first step, inside a function with no call site. Measured: tsc, biome and the whole suite stayed green and the gate did not refuse",
+  },
+  {
+    id: "harness-guard-moved-into-a-function",
+    file: "checks/mutations.ts",
+    find: 'const staleTree = staleSentinelRefusal(ROOT);\nif (staleTree !== null) {\n  console.log(staleTree);\n  console.log("\\nmutations: REFUSED TO START. A poisoned baseline grades nothing.");\n  process.exit(1);\n}',
+    replace:
+      'export function refuseIfTheTreeIsStale(): void {\n  const staleTree = staleSentinelRefusal(ROOT);\n  if (staleTree !== null) {\n    console.log(staleTree);\n    console.log("\\nmutations: REFUSED TO START. A poisoned baseline grades nothing.");\n    process.exit(1);\n  }\n}',
+    why: "the same defined-but-never-called shape in the harness, where it would snapshot a poisoned file as the original",
+  },
+  {
+    id: "gate-refusal-after-the-first-step",
+    file: "check.ts",
+    find: "const stale = staleSentinelRefusal(ROOT);",
+    replace:
+      "for (const step of STEPS) {\n  void step;\n}\nconst stale = staleSentinelRefusal(ROOT);",
+    why: "the guard still binds, tests and exits, and now runs AFTER the steps it is a precondition for, which is the ordering an anchor on the first mention in the file cannot see",
+  },
+  {
+    id: "harness-refusal-after-the-snapshot",
+    file: "checks/mutations.ts",
+    find: "const staleTree = staleSentinelRefusal(ROOT);\nif (staleTree !== null) {",
+    replace:
+      'for (const f of TARGETS) ORIGINAL.set(f, readFileSync(join(ROOT, f), "utf8"));\nconst staleTree = staleSentinelRefusal(ROOT);\nif (staleTree !== null) {',
+    why: "THE ordering that matters: snapshot first and a leftover mutation becomes the original the run restores TO. This survived while the assertion anchored on a comment at line 810",
+  },
+
+  // -------------------------------------------------------------------------
+  // Three decisions inside checks/tree_sentinel.ts that a SOURCE-side
+  // enumeration of that file found had no test at all. The shipped behaviour
+  // was right in all three; nothing held it there. Every one is a fail-open:
+  // the guard reporting "no run was interrupted" when one was.
+  //
+  // n7 from the same enumeration is deliberately NOT here. Accepting a target
+  // with an empty recorded hash makes every target read as drifted, so it
+  // degrades the message rather than failing open, and it still survives.
+  // Recorded so the next pass does not rediscover it as new.
+  // -------------------------------------------------------------------------
+  {
+    id: "tree-sentinel-empty-file-reads-as-absent",
+    file: "checks/tree_sentinel.ts",
+    find: '  if (!existsSync(path)) return { state: "absent" };',
+    replace:
+      '  if (!existsSync(path) || readFileSync(path, "utf8").trim() === "") return { state: "absent" };',
+    why: "writeFileSync truncates before it writes, so zero bytes is exactly what the kill this module exists for leaves behind, and reading that as no sentinel is the fail-open",
+  },
+  {
+    id: "tree-sentinel-read-error-reads-as-absent",
+    file: "checks/tree_sentinel.ts",
+    find: '    return { state: "unreadable", why: "the file exists and could not be read" };',
+    replace: '    return { state: "absent" };',
+    why: "readSentinel's catch branch, which nothing had ever reached: a sentinel that exists and cannot be read is not a sentinel that is not there",
+  },
+  {
+    id: "tree-sentinel-refusal-suppressed-when-nothing-drifted",
+    file: "checks/tree_sentinel.ts",
+    find: "  return describeStaleSentinel(state.sentinel, drifted, path);",
+    replace:
+      "  return drifted.length === 0 ? null : describeStaleSentinel(state.sentinel, drifted, path);",
+    why: "the composed guard reading as an all clear. The property was asserted on describeStaleSentinel and not on staleSentinelRefusal, which is the function both scripts actually call",
+  },
 ];
 
 // ---------------------------------------------------------------------------
