@@ -1,4 +1,4 @@
-81
+86
 # The number of mutation entries that must exist in checks/mutations.ts.
 #
 # Same job as checks/test_count_floor.txt, one layer out. That file stops the
@@ -42,5 +42,16 @@
 # The rule: the population to enumerate is what the code EMITS, not what the
 # tests already mention. An audit that starts from the tests can only ever grade
 # the tests that exist.
+#
+# 81 to 86 for the tree-integrity precondition. This harness rewrites source in
+# place and restores in a `finally`, which a hard kill does not run. An
+# interrupted `git commit` proved it: src/core/response.ts was left carrying
+# `if (false && ...)` across a live guard.
+#
+# The five entries all reintroduce a way the precondition could fail OPEN, which
+# is the only direction that matters here. A guard that wrongly BLOCKS wastes a
+# minute. A guard that wrongly PASSES lets this harness snapshot a poisoned file
+# as "the original", restore to it, grade every entry in this file against it,
+# and print "all files restored byte-identical" over the top.
 #
 # If you lower this, say why in the commit message.

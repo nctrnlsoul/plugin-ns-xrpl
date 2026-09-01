@@ -33,6 +33,15 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  buildSentinel,
+  clearSentinel,
+  mayClearSentinel,
+  sentinelPath,
+  sha256Of,
+  staleSentinelRefusal,
+  writeSentinel,
+} from "./tree_sentinel.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -739,6 +748,59 @@ const MUTATIONS: Mutation[] = [
     replace: "    const skipped = candidates.filter((c) => c !== first).length;",
     why: "finer than d6-other-addresses-counted-with-duplicates, which the [A, A] test catches because both forms give 0 there. [A, B, B] gives 1 shipped and 2 here, and overstating an omission is the same inaccuracy as hiding one",
   },
+
+  // -------------------------------------------------------------------------
+  // The tree-integrity precondition, and this one is not a class this repo
+  // reasoned its way to. It happened.
+  //
+  // An interrupted `git commit` killed the pre-commit hook, which killed THIS
+  // script between writing a mutation and restoring it. The restore is in a
+  // `finally`, and a `finally` does not survive a hard kill.
+  // src/core/response.ts was left holding `if (false && ...)` across the guard
+  // that turns rippled's HTTP-200-with-an-error-body into ACCOUNT_NOT_FOUND.
+  // The next commit caught it only because the hook happened to run.
+  //
+  // Every entry below reintroduces a way the new guard could fail OPEN, which
+  // is the only way it fails that matters: a precondition that passes a
+  // poisoned tree is worse than none, because the run then prints "all files
+  // restored byte-identical" over a baseline it adopted from the poisoning.
+  // -------------------------------------------------------------------------
+  {
+    id: "tree-sentinel-unreadable-reads-as-absent",
+    file: "checks/tree_sentinel.ts",
+    find: '    return { state: "unreadable", why: "not valid JSON" };',
+    replace: '    return { state: "absent" };',
+    why: "a half-written sentinel is exactly what a killed process leaves, so reading a parse failure as 'no sentinel' fails open in the one case the guard exists for",
+  },
+  {
+    id: "tree-sentinel-empty-target-list-accepted",
+    file: "checks/tree_sentinel.ts",
+    find: "  if (!Array.isArray(raw.targets) || raw.targets.length === 0) {",
+    replace: "  if (!Array.isArray(raw.targets)) {",
+    why: "a sentinel listing no targets can detect no drift, so accepting it as well-formed produces a guard that always reports the tree intact",
+  },
+  {
+    id: "tree-sentinel-drift-unreported",
+    file: "checks/tree_sentinel.ts",
+    find: "    if (hashOf(t.file) !== t.sha256) drifted.push(t.file);",
+    replace: "    if (false && hashOf(t.file) !== t.sha256) drifted.push(t.file);",
+    why: "the refusal still fires but names nothing, so a human is told a run was interrupted and given no file to look at",
+  },
+  {
+    id: "tree-sentinel-vanished-file-counts-as-intact",
+    file: "checks/tree_sentinel.ts",
+    find: "    if (hashOf(t.file) !== t.sha256) drifted.push(t.file);",
+    replace:
+      "    const __h = hashOf(t.file);\n    if (__h !== null && __h !== t.sha256) drifted.push(t.file);",
+    why: "a file the harness was mid-way through rewriting can be unreadable, and 'I cannot see it' is not 'it is fine'",
+  },
+  {
+    id: "tree-sentinel-cleared-after-failed-restore",
+    file: "checks/tree_sentinel.ts",
+    find: "  return dirtyFileCount === 0;",
+    replace: "  return true;",
+    why: "clearing the sentinel after a restore that FAILED hands the next run a poisoned tree with nothing left to warn it, which is the incident all over again one step later",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -755,6 +817,27 @@ const MUTATIONS: Mutation[] = [
 // Checked BEFORE the baseline run, because a floor that costs two minutes to
 // report is a floor people skip.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// PRECONDITION. Refuse against a tree a previous run may still be holding.
+//
+// This runs BEFORE the snapshot below, and the ordering is the whole point.
+// ORIGINAL is what every mutation is restored to, so a harness that snapshots
+// first ADOPTS a leftover mutation as the original, restores to it, and then
+// grades all 84 guards against a poisoned suite while printing "all files
+// restored byte-identical". It would be confidently, silently wrong.
+//
+// Measured: an interrupted `git commit` killed this script between writing a
+// mutation and restoring it, and left `if (false && ...)` in
+// src/core/response.ts. The restore is in a `finally`, and a `finally` does not
+// survive a hard kill.
+// ---------------------------------------------------------------------------
+const staleTree = staleSentinelRefusal(ROOT);
+if (staleTree !== null) {
+  console.log(staleTree);
+  console.log("\nmutations: REFUSED TO START. A poisoned baseline grades nothing.");
+  process.exit(1);
+}
+
 const floorText = readFileSync(join(ROOT, "checks", "mutation_count_floor.txt"), "utf8");
 const floorLine = floorText.split("\n")[0]?.trim() ?? "";
 const floor = Number.parseInt(floorLine, 10);
@@ -801,6 +884,24 @@ const TARGETS = [...new Set(MUTATIONS.map((m) => m.file))];
 const ORIGINAL = new Map<string, string>();
 for (const f of TARGETS) ORIGINAL.set(f, readFileSync(join(ROOT, f), "utf8"));
 
+// The sentinel goes down BEFORE the first mutation is written and comes up only
+// after the restore has been VERIFIED byte-identical. Anything that kills this
+// process in between leaves it behind, which is what makes the next run refuse.
+//
+// It records the pristine hash of every file this run may rewrite, so the
+// refusal can name the ones that actually drifted instead of telling a human to
+// go and look at fourteen files.
+const SENTINEL = sentinelPath(ROOT);
+writeSentinel(
+  SENTINEL,
+  buildSentinel(
+    "checks/mutations.ts",
+    process.pid,
+    new Date().toISOString(),
+    TARGETS.map((file) => ({ file, sha256: sha256Of(ORIGINAL.get(file) ?? "") })),
+  ),
+);
+
 function restoreAll() {
   for (const [f, content] of ORIGINAL) writeFileSync(join(ROOT, f), content, "utf8");
 }
@@ -815,6 +916,11 @@ try {
   if (base.red) {
     console.log("mutations: the suite is RED before any mutation. Fix that first.");
     console.log(`  ${base.summary}`);
+    // Nothing has been written yet, so the tree is exactly as it was handed
+    // over. Cleared explicitly because process.exit does NOT run the `finally`
+    // below, and a sentinel left over a tree this run never touched would
+    // block the next one for no reason.
+    clearSentinel(SENTINEL);
     process.exit(1);
   }
   console.log(`mutations: baseline green (${baseline})`);
@@ -867,9 +973,16 @@ for (const [f, content] of ORIGINAL) {
   }
 }
 
+// The sentinel comes up ONLY here, and only when the restore was verified. A
+// failed restore is the exact state it exists to announce, so clearing it then
+// would hand the next run a poisoned tree with nothing left to warn it.
+if (mayClearSentinel(dirty)) clearSentinel(SENTINEL);
+
 console.log();
 if (dirty > 0) {
   console.log(`mutations: RESTORE FAILED on ${dirty} file(s). Check your working tree NOW.`);
+  console.log(`mutations: the sentinel at ${SENTINEL} was KEPT deliberately, so the next`);
+  console.log("           run of the gate refuses rather than measuring a poisoned tree.");
   process.exit(1);
 }
 console.log("mutations: all files restored byte-identical");

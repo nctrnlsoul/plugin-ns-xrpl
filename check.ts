@@ -19,6 +19,7 @@
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { staleSentinelRefusal } from "./checks/tree_sentinel.ts";
 
 const ROOT = import.meta.dirname;
 const BIN = join(ROOT, "node_modules", ".bin");
@@ -97,6 +98,24 @@ function hookInstalled(): [boolean, string] {
 }
 
 console.log("plugin-xrpl development gate\n");
+
+// PRECONDITION, before a single step runs.
+//
+// checks/mutations.ts rewrites source files in place and restores them in a
+// `finally`, which a hard kill does not run. An interrupted `git commit` left
+// `if (false && ...)` in src/core/response.ts, and the only thing that noticed
+// was the next commit happening to run this gate.
+//
+// So: refuse to START. Every step below either measures this tree or grades it,
+// and both are worthless against a tree that is still carrying somebody else's
+// mutation. This does not repair anything, because a file with uncommitted work
+// in it is not something a check may overwrite.
+const stale = staleSentinelRefusal(ROOT);
+if (stale !== null) {
+  console.log(stale);
+  console.log("\nGATE REFUSED TO START. Nothing was measured.");
+  process.exit(1);
+}
 
 const [ok, detail] = hookInstalled();
 console.log(`[hook] ${ok ? "installed" : "NOT INSTALLED"}: ${detail}\n`);

@@ -1,4 +1,4 @@
-256
+273
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -53,6 +53,27 @@
 # through the provider at two values each; the outer catch's error name; the
 # blank-refusal fallback naming its real code; and F2, a later address repeated,
 # which [A, A] cannot distinguish and [A, B, B] can.
+#
+# Raised from 256 to 273 by the tree-integrity precondition, and this one is not
+# a class anybody reasoned their way to. It happened. An interrupted `git commit`
+# killed the pre-commit hook, which killed checks/mutations.ts between writing a
+# mutation and restoring it. The restore is in a `finally`, and a `finally` does
+# not survive a hard kill, so src/core/response.ts was left carrying
+# `if (false && ...)` across the guard that turns rippled's error body into
+# ACCOUNT_NOT_FOUND. The next commit caught it only because the hook ran.
+#
+# Seventeen tests over checks/tree_sentinel.ts: the round trip, the fail-closed
+# parse (23 malformed shapes, none of which may read as absent), the one case
+# that IS absent, drift detection at a threshold of one with a vanished file
+# counted as drifted and a negative control, the refusal naming the run and the
+# path and what to do, the refusal still firing when nothing drifted, the rule
+# that the sentinel clears only at zero dirty files, and two structural tests
+# that both scripts call the precondition BEFORE they snapshot or step.
+#
+# Those last two are structural rather than executed, and deliberately: check.ts
+# and checks/mutations.ts both run this suite, so spawning either from inside it
+# recurses, and under the mutation that removes the guard it would recurse
+# without bound.
 #
 # See also checks/mutation_count_floor.txt, which is this same idea one layer
 # out: this file stops the suite losing tests, that one stops the harness losing

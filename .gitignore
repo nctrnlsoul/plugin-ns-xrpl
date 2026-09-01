@@ -18,3 +18,10 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
+
+# The tree-integrity sentinel. checks/mutations.ts writes it before the first
+# mutation and removes it only after the restore is VERIFIED byte-identical, so
+# one left behind means that run was killed mid-flight and this tree may still
+# be carrying its mutation. It is a local runtime artifact, never a deliverable,
+# and a committed one would block every clone.
+.mutation-sentinel.json
