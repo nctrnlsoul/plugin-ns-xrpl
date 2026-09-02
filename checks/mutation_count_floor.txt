@@ -1,4 +1,4 @@
-113
+139
 # The number of mutation entries that must exist in checks/mutations.ts.
 #
 # Same job as checks/test_count_floor.txt, one layer out. That file stops the
@@ -160,5 +160,98 @@
 # them, and that text no longer exists. Its search text is proven, not assumed:
 # a miss is a hard failure here, so it would have gone STALE rather than quietly
 # testing nothing. Count unchanged by that repair.
+#
+# If you lower this, say why in the commit message.
+# 113 to 129 by the stage-1 flag and the in-turn cache. Two are the flag: removed
+# outright, and `private` set beside it. The second is the one worth naming,
+# because it is this file's usual shape in a place nobody would look for it. The
+# runtime's alwaysOnResponseStateProviderNames requires
+# `alwaysInResponseState && name && !provider.private`, so a provider can carry a
+# correct flag, be dropped from every stage-1 prompt, and produce no error, no
+# warning and no marker anywhere. A control that reports on its own behalf, one
+# field over.
+#
+# Fourteen are the cache, and eight of those are its KEY, because a cache key is
+# a partition and a wrong partition is not slow, it is wrong. Dropping the agent
+# id serves one agent's lookup to another in a process that registers this
+# provider as a module-level singleton. Dropping the skipped count serves a
+# report whose other_addresses_not_looked_up notice belongs to a different
+# message, which is invariant 10 broken from inside the cache. Admitting an
+# absent message id gives every id-less message in the process one shared entry,
+# and admitting a non-UUID string lets a caller name the partition it wants.
+#
+# Three are orderings rather than values, and orderings are what a reading of the
+# file cannot check. The cache read moved BELOW the rate limiter, so a turn that
+# already paid for its lookup is refused for asking a second time. Eviction moved
+# from insert to read, which leaves a burst of writes with no reads between them
+# unbounded, and a burst of writes with no reads is exactly what a flood of turns
+# looks like. And a RATE_LIMITED refusal stored, which is the one that is not
+# about memory at all: its message asserts a fact about NOW, so replaying it
+# after the window reopened is a false statement in the only text the model gets
+# when a lookup fails.
+#
+# If you lower this, say why in the commit message.
+# 129 to 138 by the same fix round. Three existing entries were REPAIRED rather
+# than added, all three caught by the harness as STALE rather than quietly
+# testing nothing, which is the third time that mechanism has paid for itself.
+#
+# Two of the nine are the real defect: the entry stamped with the pre-network
+# clock, and a throw from the write-time clock read escaping and turning a
+# lookup that had already succeeded into an INTERNAL_ERROR refusal. The second
+# is the cache failing the lookup, which is the one thing a cache may never do.
+#
+# Four are guards the cold pass removed while the suite stayed green: the
+# non-finite clock at the cache WRITE (one bad reading wipes every entry), the
+# null key at the write (Map takes a null key, so the entry is stored where the
+# read can never reach it and counts against the bound anyway), the eviction
+# sweep's two-sided freshness (Date.now() is not monotonic, and a one-sided
+# sweep keeps a future-stamped entry forever in a slot nothing can be served
+# from), and the storedAt TYPE check. That last one is the interesting half: the
+# non-finite half of the same line was DELETED rather than pinned, because
+# isFresh already refuses all three non-finite cases with the identical outcome
+# and no mutation could ever have killed it. The type half is real, because
+# `now - "1000"` coerces and a string stamp reads as fresh.
+#
+# One is SILENT, which predates the cache and is the path that runs on every
+# message the agent sees: a shared object handed to every consumer in the
+# process, where one write to its values rewrites what every later no-address
+# turn returns.
+#
+# Two are one file out from the code and had never been pinned by anything: the
+# turn cache's re-export from src/index.ts, and checks/failopen_lint.ts losing
+# turncache from DECIDING_FILES, which leaves the gate GREEN while reporting
+# "clean across 9 deciding files".
+#
+# Nothing was added for `cacheStable`. Measured against the pinned core: nothing
+# reads provider.cacheStable, so deleting the line changes no behaviour and no
+# mutation could demand red. The comment was corrected to say it is declarative
+# instead of describing a control. A mutation that cannot fail is worse than no
+# mutation, because it certifies a guard it never tested.
+#
+# If you lower this, say why in the commit message.
+# 138 to 139 in a third round: failopen-lint-drops-transport, the complement of
+# failopen-lint-drops-turncache. One entry, and one REPAIR that mattered more
+# than the addition.
+#
+# rp-lines-refusal-silenced had its `find` updated in round two and its `replace`
+# left behind, still naming SILENT after the shared singleton became a silent()
+# factory. MEASURED by applying it and driving the provider: baseline
+# ACCOUNT_NOT_FOUND spoken, mutated INTERNAL_ERROR spoken, so the provider still
+# SPOKE and the bug was not reproduced. The suite did go red, which is why
+# nothing noticed, but the only failing test was package-surface's tsbuildinfo
+# one. The entry had stopped silencing a lines refusal and started producing code
+# that does not compile, and the harness recorded a catch earned by an unrelated
+# test.
+#
+# The asymmetry is the lesson and it is structural. A stale `find` is a HARD
+# FAILURE here, announced by name. A stale `replace` is invisible: it still
+# matches, still mutates, still goes red, and still reports "caught". So the
+# replace is the half that has to be re-read by hand whenever a symbol it names
+# is renamed, and the only way to read it is to apply the entry and look at WHICH
+# test failed. All three entries repaired in round two were re-checked that way:
+# rp-lines-refusal-silenced now fails the three lines-refusal tests,
+# cache-caches-rate-limited fails "a RATE LIMIT refusal is decided fresh every
+# time, never replayed", and cache-caches-address-malformed fails "a MALFORMED
+# ADDRESS is never cached".
 #
 # If you lower this, say why in the commit message.

@@ -346,10 +346,24 @@ const MUTATIONS: Mutation[] = [
   {
     id: "rp-lines-refusal-silenced",
     file: "src/provider.ts",
-    // Search text updated when D6 gave speak() its second argument. The harness
-    // caught the drift itself rather than quietly testing nothing.
-    find: '    if ("ok" in linesResult && linesResult.ok === false) return speak(linesResult, skipped);',
-    replace: '    if ("ok" in linesResult && linesResult.ok === false) return SILENT;',
+    // Search text updated twice, and both times the harness caught the drift
+    // itself rather than quietly testing nothing: first when D6 gave speak() its
+    // second argument, then when the in-turn cache put this branch through
+    // remember(), and again when remember() moved into run() and stopped
+    // taking the key and the clock as arguments.
+    find: '    if ("ok" in linesResult && linesResult.ok === false) {\n      return remember(speak(linesResult, skipped, cacheState));\n    }',
+    // The REPLACE has to move with the FIND, and once it did not. `SILENT`
+    // stopped existing when the shared singleton became a silent() factory, so
+    // this entry no longer silenced the branch: it produced code that does not
+    // compile, the provider threw a ReferenceError, the outer catch spoke
+    // INTERNAL_ERROR, and the harness recorded a "catch" earned by an unrelated
+    // typecheck test. MEASURED: the only failing test was
+    // package-surface.test.ts's tsbuildinfo one, and the provider still SPOKE.
+    //
+    // A mutation whose replace does not compile tests the compiler. Staleness is
+    // a hard failure here for the find and is invisible for the replace, so the
+    // replace is the half that has to be re-read by hand.
+    replace: '    if ("ok" in linesResult && linesResult.ok === false) return silent();',
     why: "THE headline hole: the whole second half of the lookup could fail and the provider contributed nothing",
   },
   {
@@ -1094,6 +1108,221 @@ const MUTATIONS: Mutation[] = [
     find: '"provenance": true',
     replace: '"provenance": false',
     why: "the workflow is correct in every respect and nothing asks for an attestation. The publish succeeds and the package ships without one",
+  },
+  // -------------------------------------------------------------------------
+  // THE STAGE-1 FLAG, AND THE IN-TURN CACHE IT MADE NECESSARY.
+  //
+  // The flag is one line and it is the only reason this provider is asked at
+  // all on a turn the router answers by itself. The cache is what stops the
+  // flag buying that with two network reads of identical data per turn.
+  //
+  // Half of the cache is a PARTITION KEY, so half of the entries below are the
+  // key admitting something it cannot safely partition on. A key is not a
+  // performance detail: the wrong one serves one agent's lookup to another, or
+  // serves a report whose omission notice belongs to a different message.
+  // -------------------------------------------------------------------------
+  {
+    id: "always-in-response-state-removed",
+    file: "src/provider.ts",
+    find: "    alwaysInResponseState: true,",
+    replace: "    alwaysInResponseState: false,",
+    why: "without the flag the provider is absent from the stage-1 router prompt, so the router answers an XRPL question from its own priors and stage 2, where it would have run, never happens",
+  },
+  {
+    id: "always-in-response-state-cancelled-by-private",
+    file: "src/provider.ts",
+    find: "    alwaysInResponseState: true,",
+    replace: "    alwaysInResponseState: true,\n    private: true,",
+    why: "alwaysOnResponseStateProviderNames requires !provider.private, so private cancels the flag and the runtime says nothing when it does",
+  },
+  {
+    id: "cache-serves-stale-entry",
+    file: "src/core/turncache.ts",
+    find: "  return age >= 0 && age <= BOUNDS.TURN_CACHE_TTL_MS;",
+    replace: "  return age >= 0;",
+    why: "an entry with no expiry outlives the turn that produced it, and a balance read minutes ago is served as the current one",
+  },
+  {
+    id: "cache-serves-negative-age",
+    file: "src/core/turncache.ts",
+    find: "  return age >= 0 && age <= BOUNDS.TURN_CACHE_TTL_MS;",
+    replace: "  return age <= BOUNDS.TURN_CACHE_TTL_MS;",
+    why: "the one-sided form is true for every negative age, so an entry written under a clock that later runs backwards is immortal, and deps.now() is injectable",
+  },
+  {
+    id: "cache-key-drops-agent-id",
+    file: "src/core/turncache.ts",
+    find: "  return [input.agentId, input.messageId, input.address, String(skipped)].join(",
+    replace: "  return [input.messageId, input.address, String(skipped)].join(",
+    why: "the provider is a module-level singleton, so one cache serves every agent in the process, and without the agent id one agent reads another agent's lookup",
+  },
+  {
+    id: "cache-key-drops-skipped-count",
+    file: "src/core/turncache.ts",
+    find: "  return [input.agentId, input.messageId, input.address, String(skipped)].join(",
+    replace: "  return [input.agentId, input.messageId, input.address].join(",
+    why: "invariant 10 through the cache: two reports differ by exactly the other_addresses_not_looked_up line, so a key without the count serves a shortened report that reads as a complete one",
+  },
+  {
+    id: "cache-admits-missing-message-id",
+    file: "src/core/turncache.ts",
+    find: "  if (!isUuidLike(input.messageId)) return null;",
+    replace: "  if (input.messageId === null) return null;",
+    why: "Memory.id is declared optional, so an absent id is a real input. Admitted, every id-less message in the process shares one partition",
+  },
+  {
+    id: "cache-admits-non-uuid-id",
+    file: "src/core/turncache.ts",
+    find: "  if (!isUuidLike(input.messageId)) return null;",
+    replace: '  if (typeof input.messageId !== "string") return null;',
+    why: "UUID is an unbranded string, so any string is a real input. Admitted, a caller picks which partition to read by naming it",
+  },
+  {
+    id: "cache-read-ignores-nonfinite-clock",
+    file: "src/core/turncache.ts",
+    find: "  if (!Number.isFinite(input.now)) return null;",
+    replace: "  if (false) return null;",
+    why: "checkRateLimit fails CLOSED on a non-finite clock, and a key built on one puts a cache read in front of a limiter that would have refused",
+  },
+  {
+    id: "cache-checked-after-ratelimit",
+    file: "src/provider.ts",
+    find: '    // A hit returns HERE, before the rate limiter. A turn that already paid for\n    // its lookup must not be refused for asking about it a second time.\n    const cached = readTurnCache(turnCache, key, now);\n    if (cached !== null) {\n      return {\n        text: cached.text,\n        values: { ...cached.values },\n        data: { ...cached.data, xrplCache: "hit" },\n      };\n    }\n\n    const limit = checkRateLimit(stamps, now);\n    // NEVER stored. This message asserts a fact about now, that the limit "has\n    // been reached", so replaying it after the window reopened would be a false\n    // statement in report content, and a refusal message is the only text the\n    // model gets when a lookup fails.\n    if (!limit.ok) return speak(limit, skipped, cacheState);',
+    replace:
+      '    const limit = checkRateLimit(stamps, now);\n    if (!limit.ok) return speak(limit, skipped, cacheState);\n\n    const cached = readTurnCache(turnCache, key, now);\n    if (cached !== null) {\n      return {\n        text: cached.text,\n        values: { ...cached.values },\n        data: { ...cached.data, xrplCache: "hit" },\n      };\n    }',
+    why: "a turn that already paid for its lookup is refused for asking a second time, so the router gets a report and the planner gets a rate-limit refusal inside one turn",
+  },
+  {
+    id: "cache-caches-rate-limited",
+    file: "src/provider.ts",
+    find: "    if (!limit.ok) return speak(limit, skipped, cacheState);",
+    replace: "    if (!limit.ok) return remember(speak(limit, skipped, cacheState));",
+    why: "the message asserts a fact about NOW, that the limit has been reached. Replayed after the window reopens it is a false statement in the only text the model gets",
+  },
+  {
+    id: "cache-caches-address-malformed",
+    file: "src/provider.ts",
+    find: '    if (!address.ok) return speak(address, skipped, "not-cacheable");',
+    replace:
+      '    if (!address.ok) {\n      const t = deps.now();\n      const k = turnCacheKey({\n        agentId: runtime?.agentId,\n        messageId: message?.id,\n        address: first,\n        skipped,\n        now: t,\n      });\n      const c = readTurnCache(turnCache, k, t);\n      if (c !== null) {\n        return { text: c.text, values: { ...c.values }, data: { ...c.data, xrplCache: "hit" } };\n      }\n      const spoken = speak(address, skipped, "miss");\n      writeTurnCache(turnCache, k, spoken, t);\n      return spoken;\n    }',
+    why: "nothing read the ledger, so there is nothing a later call could legitimately replay, and it keys the cache on an UNVALIDATED candidate string",
+  },
+  {
+    id: "cache-evicts-on-read-not-insert",
+    file: "src/core/turncache.ts",
+    find: "  });\n  evictTurnCache(cache, now);\n}\n\n/**\n * Serve one turn's stored result, or null.\n *\n * Every unknown is a miss AND a delete. A cache is the one place where falling\n * through to the real work is always safe, so nothing here has to guess what a\n * malformed entry was supposed to mean.\n */\nexport function readTurnCache(\n  cache: TurnCache,\n  key: string | null,\n  now: number,\n): CachedResult | null {\n  if (key === null) return null;\n",
+    replace:
+      "  });\n}\n\n/** Serve one turn's stored result, or null. */\nexport function readTurnCache(\n  cache: TurnCache,\n  key: string | null,\n  now: number,\n): CachedResult | null {\n  if (key === null) return null;\n  evictTurnCache(cache, now);\n",
+    why: "insert is the only path that grows the map. Evicting on read leaves a burst of writes with no reads between them unbounded, and that burst is what a flood of turns looks like",
+  },
+  {
+    id: "cache-unbounded",
+    file: "src/core/turncache.ts",
+    find: "  while (cache.size > BOUNDS.TURN_CACHE_MAX_ENTRIES) {",
+    replace: "  while (false && cache.size > BOUNDS.TURN_CACHE_MAX_ENTRIES) {",
+    why: "H-2 one layer in: an uncapped map of rendered reports grows for as long as turns keep arriving",
+  },
+  {
+    id: "cache-returns-shared-reference",
+    file: "src/core/turncache.ts",
+    find: "  return { text: held.text, values: { ...held.values }, data: { ...held.data } };",
+    replace: "  return { text: held.text, values: held.values, data: held.data };",
+    why: "a consumer that mutates its result rewrites what every later hit on that key serves",
+  },
+  {
+    id: "cache-ttl-below-lookup-budget",
+    file: "src/core/bounds.ts",
+    find: "  TURN_CACHE_TTL_MS: 30_000,",
+    replace: "  TURN_CACHE_TTL_MS: 10_000,",
+    why: "a TTL under TOTAL_LOOKUP_BUDGET_MS expires on exactly the slow turns the cache exists for: the entry is gone before the second call of the same turn asks for it",
+  },
+  // -------------------------------------------------------------------------
+  // WHAT A COLD ADVERSARIAL PASS GOT PAST THE ENTRIES ABOVE.
+  //
+  // Six of its own hand-applied mutations SURVIVED a fully green suite, and
+  // the shape is this file's oldest lesson rather than a new one: a guard
+  // pinned by a test that cannot fail is pinned by nothing. The write-guard
+  // test wrote into an EMPTY cache and asserted the size stayed zero, which
+  // is true with the guard and true without it, because the bad entry is
+  // written and then immediately swept.
+  //
+  // Two of these are not weak tests but a real defect the pass found: the
+  // entry was stamped with the clock read BEFORE the network, which charged
+  // network time to the TTL and let a slow turn's sweep delete a faster
+  // turn's live entry. Two more are guards that had NO test at all, one file
+  // out: the public re-export a consumer depends on, and the fail-open
+  // lint's own hand-maintained file list.
+  // -------------------------------------------------------------------------
+  {
+    id: "cache-stamped-with-the-pre-network-clock",
+    file: "src/provider.ts",
+    find: "      writeTurnCache(turnCache, key, result, writtenAt);",
+    replace: "      writeTurnCache(turnCache, key, result, now);",
+    why: "the clock from BEFORE the first request charges the whole network time to the TTL, and hands the sweep a clock older than entries other turns wrote while this one was in flight. isFresh is two-sided, so a slow turn completing deletes a live entry belonging to a different turn",
+  },
+  {
+    id: "cache-write-clock-throw-discards-the-report",
+    file: "src/provider.ts",
+    find: "      let writtenAt: number;\n      try {\n        writtenAt = deps.now();\n      } catch {\n        // A clock that throws is not a reason to discard a report that already\n        // came back from the ledger. Not caching is this module's safe direction\n        // everywhere else and it is the safe direction here: the next call does\n        // the real work. Nothing about the report itself is in doubt.\n        return result;\n      }\n",
+    replace: "      const writtenAt = deps.now();\n",
+    why: "the write-time stamp is a SECOND call to deps.now(). A throw escaping it turns a lookup that already succeeded against the ledger into an INTERNAL_ERROR refusal, which is the cache failing the lookup",
+  },
+  {
+    id: "silent-result-is-a-shared-singleton",
+    file: "src/provider.ts",
+    find: 'function silent(): SpokenResult {\n  return { text: "", values: {}, data: { ok: true, attempted: false, xrplCache: "not-cacheable" } };\n}',
+    replace:
+      'const SHARED_SILENT: SpokenResult = {\n  text: "",\n  values: {},\n  data: { ok: true, attempted: false, xrplCache: "not-cacheable" },\n};\nfunction silent(): SpokenResult {\n  return SHARED_SILENT;\n}',
+    why: "the no-address path runs on every message the agent sees, so one shared object reaches every consumer in the process and one write to its values rewrites what every later silent turn returns",
+  },
+  {
+    id: "cache-write-admits-nonfinite-clock",
+    file: "src/core/turncache.ts",
+    find: "  if (key === null || !Number.isFinite(now)) return;",
+    replace: "  if (key === null) return;",
+    why: "the NaN-stamped entry is written and then swept by evictTurnCache(cache, NaN), and no age compares true against NaN, so ONE non-finite clock reading wipes every entry in the process on its way past",
+  },
+  {
+    id: "cache-write-admits-null-key",
+    file: "src/core/turncache.ts",
+    find: "  if (key === null || !Number.isFinite(now)) return;",
+    replace: "  if (!Number.isFinite(now)) return;",
+    why: "Map accepts a null key, so the entry is stored where readTurnCache returns early and can never reach it: dead weight counting against the bound and evicting live entries",
+  },
+  {
+    id: "cache-eviction-freshness-one-sided",
+    file: "src/core/turncache.ts",
+    find: "    if (!isFresh(entry.storedAt, now)) cache.delete(key);",
+    replace: "    if (now - entry.storedAt > BOUNDS.TURN_CACHE_TTL_MS) cache.delete(key);",
+    why: "Date.now() is not monotonic and one NTP step backwards leaves an entry stamped in the future. The read refuses it on sight; a sweep that only looks for entries too OLD keeps it forever, holding a slot nothing can be served from",
+  },
+  {
+    id: "cache-entry-storedat-type-unchecked",
+    file: "src/core/turncache.ts",
+    find: '  if (typeof held.storedAt !== "number") {',
+    replace: "  if (false) {",
+    why: 'the arithmetic coerces: `now - "1000"` is a real number, so a string stamp reaches isFresh and reads as fresh. This is the half of that guard that can change a result, which is why the non-finite half was removed rather than kept',
+  },
+  {
+    id: "index-drops-turncache-exports",
+    file: "src/index.ts",
+    find: 'export {\n  type CachedResult,\n  type CachedScalar,\n  createTurnCache,\n  isUuidLike,\n  readTurnCache,\n  TURN_CACHE_KEY_SEPARATOR,\n  type TurnCache,\n  type TurnCacheEntry,\n  type TurnCacheKeyInput,\n  turnCacheKey,\n  writeTurnCache,\n} from "./core/turncache.ts";',
+    replace: "",
+    why: "every test imports ../core/turncache.ts directly, so losing the re-export is invisible to the suite and total for a consumer, which has the package entry point and nothing else",
+  },
+  {
+    id: "failopen-lint-drops-turncache",
+    file: "checks/failopen_lint.ts",
+    find: '  "src/core/turncache.ts",\n',
+    replace: "",
+    why: "DECIDING_FILES is a hand-maintained array, and the gate stays GREEN reporting 'clean across 9 deciding files' while the newest deciding module is read for nothing but invisible characters",
+  },
+  {
+    id: "failopen-lint-drops-transport",
+    file: "checks/failopen_lint.ts",
+    find: '  "src/transport/client.ts",\n',
+    replace: "",
+    why: "the array's comment states the rule as every module under src/core PLUS the transport and the provider, and the test enforced only the src/core third of it. The transport is where the response body arrives, so it is the last place a coercion should go unread",
   },
 ];
 

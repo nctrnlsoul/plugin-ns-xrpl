@@ -29,5 +29,18 @@ export {
   type Result,
   refuse,
 } from "./core/result.ts";
+export {
+  type CachedResult,
+  type CachedScalar,
+  createTurnCache,
+  isUuidLike,
+  readTurnCache,
+  TURN_CACHE_KEY_SEPARATOR,
+  type TurnCache,
+  type TurnCacheEntry,
+  type TurnCacheKeyInput,
+  turnCacheKey,
+  writeTurnCache,
+} from "./core/turncache.ts";
 export { default, xrplPlugin } from "./plugin.ts";
 export { createXrplProvider, type XrplProviderDeps, xrplAccountProvider } from "./provider.ts";

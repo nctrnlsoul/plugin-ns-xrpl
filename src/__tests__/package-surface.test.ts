@@ -164,6 +164,38 @@ describe("the dependency surface a consumer inherits", () => {
   });
 });
 
+// The export surface a CONSUMER actually gets. Found unasserted by a cold pass:
+// deleting the whole turn cache export block from src/index.ts left the suite
+// green at 361, because every test imports ../core/turncache.ts directly. A
+// consumer cannot do that. It has the package entry point and nothing else, and
+// src/index.ts says in its own header that the pure core is exported so it can
+// be tested, reused and audited without standing up a runtime.
+describe("the public entry point re-exports the pure core it claims to", () => {
+  it("exports the turn cache, and the SAME bindings the provider itself uses", async () => {
+    const index = (await import("../index.ts")) as unknown as Record<string, unknown>;
+    const direct = (await import("../core/turncache.ts")) as unknown as Record<string, unknown>;
+
+    const names = [
+      "TURN_CACHE_KEY_SEPARATOR",
+      "createTurnCache",
+      "isUuidLike",
+      "readTurnCache",
+      "turnCacheKey",
+      "writeTurnCache",
+    ];
+    // Rule 95: a loop over an empty list passes vacuously.
+    expect(names.length).toBeGreaterThan(0);
+
+    for (const name of names) {
+      expect(index, `src/index.ts must export ${name}`).toHaveProperty(name);
+      expect(direct[name], `setup: ${name} must exist in the module`).toBeDefined();
+      // Identity, not merely presence. A re-export that resolved to some other
+      // binding would satisfy toHaveProperty and be a different function.
+      expect(index[name], `${name} must be the module's own binding`).toBe(direct[name]);
+    }
+  });
+});
+
 describe("the pack listing scanner", () => {
   const CLEAN = [
     "npm notice 1.1kB LICENSE",

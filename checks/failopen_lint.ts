@@ -16,14 +16,30 @@ import { join, relative, sep } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
 
-/** Only files that decide. Adding a file here is a deliberate act. */
+/**
+ * The files whose fallbacks, coercions and loose equalities are checked.
+ * Everything else under src/ gets the character rules only.
+ *
+ * The rule is now MECHANICAL: every module under src/core, plus the transport
+ * and the provider. It used to be "only files that decide", which is a judgment
+ * call, and a hand-maintained list held together by a judgment call is a list
+ * that drifts. src/core/turncache.ts had to be added by hand and src/core/
+ * bounds.ts had never been added at all. src/__tests__/source-hygiene.test.ts
+ * now fails if any file under src/core is missing from this array, so the list
+ * cannot shrink or fall behind without something noticing.
+ *
+ * A file with nothing to find, like bounds.ts, costs one pass and no findings.
+ * That is cheaper than deciding, per file, whether it decides.
+ */
 const DECIDING_FILES = [
   "src/core/address.ts",
+  "src/core/bounds.ts",
   "src/core/node-url.ts",
   "src/core/response.ts",
   "src/core/ratelimit.ts",
   "src/core/render.ts",
   "src/core/result.ts",
+  "src/core/turncache.ts",
   "src/transport/client.ts",
   "src/provider.ts",
 ];

@@ -1,4 +1,4 @@
-312
+370
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -186,5 +186,88 @@
 # last one is the only one that matters and it is proved against the real file:
 # strip the comparison out and the step still installs npm and still names
 # 11.5.1, so every assertion but the `exit 1` one still passes.
+#
+# If you lower this, say why in the commit message.
+# Raised from 312 to 361 by the STAGE-1 flag and the in-turn cache it made
+# necessary. The flag is the larger half. ElizaOS answers in two stages, and the
+# stage-1 router prompt contains no provider data at all, so a router that
+# replies by itself means stage 2 never runs and this provider is never asked:
+# the same silence the whole package exists to prevent, arriving one stage
+# earlier and with didRespond=true beside it.
+#
+# Three of the new tests drive the REAL stage 1 through
+# DefaultMessageService.handleMessage with a stub RESPONSE_HANDLER model that
+# records the prompt it is handed, and read the report out of that prompt. Not a
+# property on the provider object: a flag is a claim about what the runtime does
+# with it. Two of the three are negative controls, one with the flag off and one
+# with `private` set, because `private` cancels the flag and the runtime says
+# nothing when it does. The rig control is a second flagged provider whose marker
+# must be in the prompt in all three, or the assertions about ours are void.
+#
+# The rest are the cache, and most of them are its KEY. A cache key is a
+# partition, and the wrong partition is not slow, it is wrong: it serves one
+# agent's lookup to another, or a report whose other_addresses_not_looked_up
+# notice belongs to a different message. So the key is tested component by
+# component, and every rejection asserts data.xrplCache rather than "a lookup
+# happened", because "no fetch" is also true of a lookup that failed before it
+# reached the network.
+#
+# The one to keep if the rest were cut: the second call of a turn performs ZERO
+# fetches AND the rate-limit window advances by EXACTLY ONE, proved from both
+# sides in one test. Nine further turns must all succeed, which is only true if
+# the cached repeat spent nothing, and the tenth must be refused, which is only
+# true if the first call spent one.
+#
+# If you lower this, say why in the commit message.
+# Raised from 361 to 369 by a FIX ROUND after a cold adversarial pass, which got
+# six of its own hand-applied mutations past this suite while it sat green at
+# 361. Only one of the six was a defect in the code. The other five were guards
+# pinned by tests that could not fail, which is this file's oldest lesson
+# arriving in a new place.
+#
+# The defect: the cache entry was stamped with the clock read BEFORE the network,
+# so a lookup that spent its budget wrote an entry already two thirds of its TTL
+# old, and the eviction sweep ran with a clock older than entries other turns had
+# written while this one was in flight. isFresh is two-sided, so those newer
+# entries had a NEGATIVE age and a slow turn completing deleted a live entry
+# belonging to a faster one. Three tests: the threshold case of exactly one
+# newer live entry surviving a late write, the TTL measured from the write, and
+# a clock that throws at write time not discarding a report that already came
+# back from the ledger.
+#
+# The test that could not fail is worth naming because it looked thorough. It
+# wrote under a non-finite clock into an EMPTY cache and asserted the size was
+# zero. Remove the guard and the bad entry is written and then swept by the same
+# call, so the size is zero either way. It now writes ONE live entry first, which
+# is the smallest case that tells the two versions apart and also the case that
+# matters: a single non-finite clock reading would otherwise wipe every entry in
+# the process on its way past.
+#
+# Two of the eight are one file out from the code and had no test at all: the
+# public re-export a consumer depends on (deleting the whole block from
+# src/index.ts was invisible, because every test imports the module directly),
+# and checks/failopen_lint.ts's own hand-maintained DECIDING_FILES array. That
+# second test found a real gap the moment it ran: src/core/bounds.ts had never
+# been in the list.
+#
+# If you lower this, say why in the commit message.
+# 369 to 370 in a third round. One test, and it is the complement of the one
+# added in round two: the fail-open lint's DECIDING_FILES array must name
+# everything the rule covers AND nothing it does not. The round-two version
+# checked only the src/core third of a rule its own comment stated as "every
+# module under src/core, plus the transport and the provider", so removing
+# src/transport/client.ts left the suite green at 369. That is a comment
+# describing a control the code does not implement, which is the
+# src/core/node-url.ts failure CLAUDE.md records by name, committed while fixing
+# an instance of it.
+#
+# Two comments were corrected in the same round without moving the count, and
+# both were stale rather than wrong when written. The TTL floor's stated reason
+# in src/core/bounds.ts, and the copy of it in turncache.test.ts, still derived
+# the floor from TOTAL_LOOKUP_BUDGET_MS on the grounds that the entry was stamped
+# BEFORE the network read. Round two stopped doing that. The floor may still be
+# the right floor, but it is now a MARGIN chosen against a gap this package
+# cannot measure (a stage-1 model generation inside the host), and both places
+# now say so rather than inventing a mechanism.
 #
 # If you lower this, say why in the commit message.

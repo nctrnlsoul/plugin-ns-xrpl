@@ -17,11 +17,14 @@ import { randomUUID } from "node:crypto";
 import {
   AgentRuntime,
   ChannelType,
+  DefaultMessageService,
   type IAgentRuntime,
   InMemoryDatabaseAdapter,
   MemoryType,
+  ModelType,
+  type Provider,
 } from "@elizaos/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createXrplProvider } from "../provider.ts";
 
 const ADDR = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
@@ -194,5 +197,177 @@ describe("the refusal survives the real runtime and reaches the prompt", () => {
       "XRPL_LOOKUP_FAILED_SENTINEL",
     );
     expect(prompt.toLowerCase()).not.toContain("error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STAGE 1. The second half of the same finding, and the one composeState above
+// cannot see.
+//
+// ElizaOS answers in two stages. Stage 1 (RESPONSE_HANDLER) is a router, and its
+// prompt is built by composeResponseState, which composes a FIXED list of
+// providers plus whatever declares alwaysInResponseState. Stage 2
+// (ACTION_PLANNER) is where an ordinary provider runs. If the model writes a
+// stage-1 reply of its own, stage 2 never runs, the provider is never asked, and
+// the model answers the XRPL question from its priors with didRespond=true and
+// no error anywhere. That is the same silence as a thrown refusal, arriving one
+// stage earlier.
+//
+// So this drives the REAL stage 1: DefaultMessageService.handleMessage, with a
+// stub RESPONSE_HANDLER model that records the prompt it is handed. What is
+// asserted is the report text inside that prompt, not a property on an object.
+// ---------------------------------------------------------------------------
+
+const ACCOUNT_INFO_OK = {
+  result: {
+    account_data: {
+      Account: ADDR,
+      Balance: "56774133566",
+      OwnerCount: 1,
+      Sequence: 44196,
+      LedgerEntryType: "AccountRoot",
+    },
+    ledger_index: 106661700,
+    validated: true,
+    status: "success",
+  },
+};
+
+const LINES_OK = {
+  result: { account: ADDR, lines: [], ledger_index: 106661700, validated: true, status: "success" },
+};
+
+/**
+ * Run one real turn and return the prompt stage 1 was given.
+ *
+ * `shape` receives the provider this package actually ships and returns the one
+ * to register, so the negative control differs from the shipped object in
+ * exactly one field and nothing else.
+ */
+async function stage1Prompt(shape: (p: Provider) => Provider) {
+  const fetchImpl = vi.fn(async (_u: unknown, init?: { body?: string }) => {
+    const method = String(JSON.parse(String(init?.body ?? "{}")).method ?? "");
+    const body = method === "account_info" ? ACCOUNT_INFO_OK : LINES_OK;
+    return new Response(JSON.stringify(body), { status: 200 });
+  });
+  const prompts: string[] = [];
+  const id = randomUUID() as `${string}-${string}-${string}-${string}-${string}`;
+
+  runtime = new AgentRuntime({
+    agentId: id,
+    character: {
+      name: "T",
+      bio: ["b"],
+      system: "s",
+      templates: {},
+      plugins: [],
+      knowledge: [],
+      secrets: {},
+      settings: {},
+      messageExamples: [],
+      postExamples: [],
+      topics: [],
+      adjectives: [],
+      style: { all: [], chat: [], post: [] },
+      id,
+    },
+    adapter: new InMemoryDatabaseAdapter(),
+    enableDocuments: false,
+    enableRelationships: false,
+    enableTrajectories: false,
+    plugins: [
+      {
+        name: "xrpl-under-test",
+        description: "the plugin under test plus a control",
+        providers: [
+          shape(createXrplProvider({ fetchImpl: fetchImpl as never })),
+          {
+            name: "STAGE1_CONTROL",
+            description: "proves the rig reads the stage-1 prompt",
+            alwaysInResponseState: true,
+            get: async () => ({ text: CONTROL_MARKER, values: {}, data: {} }),
+          },
+        ],
+        models: {
+          [ModelType.RESPONSE_HANDLER]: async (_rt: unknown, params: unknown) => {
+            prompts.push(JSON.stringify(params));
+            return { text: "ok" };
+          },
+          [ModelType.TEXT_LARGE]: async () => "ok",
+          [ModelType.TEXT_SMALL]: async () => "ok",
+        },
+      },
+    ],
+  } as never);
+
+  await runtime.initialize();
+
+  await new DefaultMessageService().handleMessage(
+    runtime as never,
+    {
+      id: randomUUID(),
+      roomId: randomUUID(),
+      entityId: randomUUID(),
+      agentId: runtime.agentId,
+      content: { text: `what is the balance of ${ADDR}`, channelType: ChannelType.GROUP },
+      createdAt: Date.now(),
+      metadata: { type: MemoryType.MESSAGE },
+    } as never,
+    (async () => []) as never,
+    { responseId: randomUUID() } as never,
+  );
+
+  return { prompts, fetchImpl };
+}
+
+describe("the provider reaches the STAGE 1 router prompt, not only the planner's", () => {
+  it("the report is IN the prompt the router is given", async () => {
+    const { prompts, fetchImpl } = await stage1Prompt((p) => p);
+
+    // Rig control first. If stage 1 was never reached, or its prompt carries no
+    // provider text at all, nothing below means anything.
+    expect(prompts, "stage 1 must have run exactly once").toHaveLength(1);
+    const prompt = prompts[0] ?? "";
+    expect(prompt, "rig control: a flagged provider must reach the stage-1 prompt").toContain(
+      CONTROL_MARKER,
+    );
+
+    // The claim. Not "the address appears": the user's own message carries the
+    // address, so that would pass with the provider switched off entirely. These
+    // are strings only this provider's report can produce.
+    expect(prompt, "the router must be given the report, not just the question").toContain(
+      "XRPL account report",
+    );
+    expect(prompt).toContain("xrp_balance_drops: 56774133566");
+    expect(fetchImpl, "the lookup really ran").toHaveBeenCalled();
+  });
+
+  it("NEGATIVE CONTROL: without the flag the same report is ABSENT and nothing is looked up", async () => {
+    // One field different from the object above, and nothing else.
+    const { prompts, fetchImpl } = await stage1Prompt((p) => ({
+      ...p,
+      alwaysInResponseState: false,
+    }));
+
+    expect(prompts).toHaveLength(1);
+    const prompt = prompts[0] ?? "";
+    expect(prompt, "the rig still reads the prompt").toContain(CONTROL_MARKER);
+    expect(prompt, "the router gets no report at all").not.toContain("XRPL account report");
+    expect(prompt).not.toContain("xrp_balance_drops");
+    expect(
+      fetchImpl,
+      "without the flag the provider is not even asked during stage 1",
+    ).not.toHaveBeenCalled();
+  });
+
+  it("NEGATIVE CONTROL: `private` cancels the flag, which is why it is never set", async () => {
+    // Measured in @elizaos/core 2.0.3-beta.7: alwaysOnResponseStateProviderNames
+    // requires `alwaysInResponseState && name && !provider.private`. A private
+    // provider with the flag set is silently dropped from stage 1, and nothing
+    // reports it.
+    const { prompts } = await stage1Prompt((p) => ({ ...p, private: true }));
+    const prompt = prompts[0] ?? "";
+    expect(prompt).toContain(CONTROL_MARKER);
+    expect(prompt, "private wins over the flag").not.toContain("XRPL account report");
   });
 });
