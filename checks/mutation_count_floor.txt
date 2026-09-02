@@ -1,4 +1,4 @@
-108
+113
 # The number of mutation entries that must exist in checks/mutations.ts.
 #
 # Same job as checks/test_count_floor.txt, one layer out. That file stops the
@@ -138,5 +138,27 @@
 # reads PARSED run commands rather than raw text, and the workflow file carries
 # both traps deliberately so those two properties are proved against the real
 # artifact instead of a fixture.
+#
+# 108 to 113 when the package became a TRUSTED PUBLISHER on npm and the registry
+# token left this repo. Two reintroduce the token, which is an inversion: that
+# env was a REQUIREMENT until OIDC replaced it, and every CI attempt under it
+# died on EOTP because a granular access token cannot answer npm's 2FA
+# challenge. One puts it back in the publish step where it used to live. The
+# other puts it at JOB level, which is the one worth naming: it authenticates
+# the publish exactly as the step-level env did, and a check that reads only the
+# publish step reports nothing about it.
+#
+# Three are the npm floor that trusted publishing needs. One deletes the raise,
+# one lowers the floor below 11.5.1 so the check passes on an npm that cannot do
+# trusted publishing at all, and one deletes ONLY the `exit 1`, leaving a check
+# that still runs, still prints its complaint, and no longer stops anything.
+# That third one is this file's own shape aimed at the newest guard in the repo:
+# a control that reports instead of acting.
+#
+# One existing entry was REPAIRED rather than added. workflow-verify-after-publish
+# searched for the Verify and Publish steps with the token env block between
+# them, and that text no longer exists. Its search text is proven, not assumed:
+# a miss is a hard failure here, so it would have gone STALE rather than quietly
+# testing nothing. Count unchanged by that repair.
 #
 # If you lower this, say why in the commit message.

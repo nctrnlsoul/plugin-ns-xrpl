@@ -14,6 +14,15 @@
 //   3. the gate runs BEFORE the publish step
 //   4. `--provenance` is not on the command line, because publishConfig sets it
 //
+// Two more blocks below are about AUTHENTICATION rather than attestation, and
+// the first of them is an INVERSION. npm now authenticates this workflow as a
+// registered trusted publisher, so:
+//
+//   5. no registry token, anywhere in the file. What was once the thing to
+//      assert PRESENT is now a regression to assert ABSENT
+//   6. npm is raised to the 11.5.1 that trusted publishing requires, and the
+//      job REFUSES below that floor instead of reporting a version
+//
 // THE METHOD MATTERS MORE THAN THE LIST. Commit 3829264 established that
 // asserting a SHAPE appears in a file is not asserting the thing is configured,
 // and found three ways to satisfy a shape check while the guard never runs. Two
@@ -59,6 +68,26 @@ const CLOUD_RUNNERS = [
 
 /** The flag that must live in package.json and nowhere else. */
 const FLAG = "--provenance";
+
+/**
+ * The two names the removed token path used.
+ *
+ * Asserted ABSENT, which is an inversion: until npm's trusted publisher
+ * configuration replaced it, this env was the thing to assert present.
+ */
+const TOKEN_ENV = "NODE_AUTH_TOKEN";
+const TOKEN_SECRET = "secrets.NPM_TOKEN";
+
+/**
+ * Any repository secret at all, not only the one that used to be here.
+ *
+ * Rule 2: test the threshold, not the comfortable example. Pinning the exact
+ * former name would let `secrets.NPM_TOKEN_2` back in unremarked.
+ */
+const SECRET_EXPR = /secrets\./;
+
+/** npm states this floor itself: trusted publishing needs npm 11.5.1 or later. */
+const NPM_FLOOR = "11.5.1";
 
 /**
  * Blank out YAML comments, leaving line structure intact.
@@ -132,6 +161,15 @@ function readRunsOn(src: string): string[] {
 interface Step {
   name: string;
   run: string;
+  /**
+   * Every line of the step, comments already stripped.
+   *
+   * `run` alone cannot see a step's `env:` block, and the token this file now
+   * asserts is ABSENT lived in one. Rule 4: enumerate from the SOURCE side. A
+   * check that can only read run commands cannot report on a key it structurally
+   * never looks at, and would pass whatever the step declares.
+   */
+  body: string;
 }
 
 /**
@@ -160,7 +198,7 @@ function readSteps(src: string): Step[] {
         .filter(Boolean)
         .join(" ");
     }
-    steps.push({ name: name ? (name[1] as string) : "", run });
+    steps.push({ name: name ? (name[1] as string) : "", run, body });
     current = null;
   };
 
@@ -191,6 +229,17 @@ const RUN_COMMANDS = STEPS.map((s) => s.run).filter(Boolean);
 const PKG = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 
 const stepRunning = (needle: string): number => STEPS.findIndex((s) => s.run.includes(needle));
+
+/** The step that publishes, from any parse of this file. Throws rather than
+ * returning undefined, so an assertion is never made against nothing. */
+function publishStepOf(steps: Step[]): Step {
+  const found = steps.find((s) => s.run.includes("npm publish"));
+  if (found === undefined) throw new Error("no publish step parsed: nothing to assert on");
+  return found;
+}
+
+/** Whether a step declares an `env:` block, read from the step's own lines. */
+const declaresEnv = (step: Step): boolean => step.body.split("\n").some((l) => l.trim() === "env:");
 
 describe("the reader, before anything it reports is believed", () => {
   it("POSITIVE CONTROL: a directive written in a comment is stripped away", () => {
@@ -296,6 +345,100 @@ describe("4. provenance is requested in exactly one place", () => {
     // red on a correct workflow. That is what makes stripping load-bearing.
     expect(RAW).toContain(FLAG);
     expect(stripYamlComments(RAW)).not.toContain(FLAG);
+  });
+});
+
+describe("5. authentication is OIDC, so a registry token here is a REGRESSION", () => {
+  // An INVERSION, not a new rule. This env used to be the thing to assert
+  // present. npm now authenticates this workflow as a registered trusted
+  // publisher, which is also what answers its 2FA requirement, and every CI
+  // attempt under the old path died on EOTP because a granular access token
+  // cannot answer a 2FA challenge. A token here would now be a long-lived
+  // credential the repo does not need, publishing by a route the trusted
+  // publisher configuration never authorised.
+
+  it("the publish step declares no env block at all", () => {
+    // Rule 4, enumerate from the SOURCE side: assert on what the step DECLARES,
+    // not on the one key name that used to be wrong. A check for the name alone
+    // reports nothing about an env block holding some other credential.
+    expect(declaresEnv(publishStepOf(STEPS))).toBe(false);
+  });
+
+  it("no step anywhere reads a repository secret", () => {
+    // Whole file, not just the publish step. A job-level env block would
+    // authenticate the publish exactly as well while satisfying a check that
+    // only ever looks at the publish step.
+    expect(stripYamlComments(RAW)).not.toMatch(SECRET_EXPR);
+  });
+
+  it("neither name survives stripping, so the env key is pinned as well as the source", () => {
+    const stripped = stripYamlComments(RAW);
+    expect(stripped).not.toContain(TOKEN_ENV);
+    expect(stripped).not.toContain(TOKEN_SECRET);
+  });
+
+  it("NEGATIVE CONTROL: both names ARE in this file, and only in comments", () => {
+    // The same positive property the --provenance test asserts, for the same
+    // reason. The real artifact contains both strings, so a grep-the-file
+    // implementation of the three tests above would go red on a correct
+    // workflow. That is what makes the stripping load-bearing here too.
+    expect(RAW).toContain(TOKEN_ENV);
+    expect(RAW).toContain(TOKEN_SECRET);
+  });
+
+  it("NEGATIVE CONTROL: putting the env block back trips it, for the reason it names", () => {
+    const withToken = RAW.replace(
+      "        run: npm publish --access public",
+      `        run: npm publish --access public\n        env:\n          ${TOKEN_ENV}: \${{ ${TOKEN_SECRET} }}`,
+    );
+    // Each detector fires on its own subject, so a failure names which property
+    // broke rather than landing on whichever assertion happened to run first.
+    expect(declaresEnv(publishStepOf(readSteps(withToken)))).toBe(true);
+    expect(stripYamlComments(withToken)).toMatch(SECRET_EXPR);
+    expect(stripYamlComments(withToken)).toContain(TOKEN_ENV);
+  });
+});
+
+describe("6. the runner's npm is raised to what trusted publishing needs", () => {
+  // The only precondition in this workflow that belongs to the RUNNER rather
+  // than to the repo. npm requires 11.5.1 or later for OIDC, and node-version
+  // floats, so what actually lands is decided by GitHub on the day and nothing
+  // here can read it. What CAN be pinned is that the workflow raises it, and
+  // then refuses below the floor, ahead of the one-way door.
+
+  const npmStep = STEPS.find((s) => s.run.includes("npm install -g"));
+
+  it("a step raises npm, and it runs BEFORE the publish step", () => {
+    expect(npmStep).toBeDefined();
+    expect(stepRunning("npm install -g")).toBeLessThan(stepRunning("npm publish"));
+  });
+
+  it("it also runs before the gate, so a runner below the floor fails in seconds", () => {
+    // Not cosmetic. Behind the gate this costs about fifteen minutes and a
+    // pushed tag before anyone learns the runner could not have published.
+    expect(stepRunning("npm install -g")).toBeLessThan(stepRunning("bun run verify"));
+  });
+
+  it("it names the floor npm itself states", () => {
+    expect(npmStep?.run).toContain(NPM_FLOOR);
+  });
+
+  it("it FAILS the job below the floor rather than only reporting the version", () => {
+    // The whole difference between a guard and a log line. A step that runs
+    // `npm --version` and prints it satisfies every assertion above and lets
+    // the publish go ahead on npm 11.4.2.
+    expect(npmStep?.run).toContain("exit 1");
+    expect(npmStep?.run).toContain("sort -V");
+  });
+
+  it("NEGATIVE CONTROL: dropping the refusal keeps the raise, and is still caught", () => {
+    // Proved against the real artifact, not a fixture string: strip the
+    // comparison out of this very file and the step still installs npm and
+    // still names 11.5.1. Only the `exit 1` assertion above notices.
+    const noRefusal = RAW.replace(/\n\s*if \[.*?\n\s*fi\n/s, "\n");
+    const step = readSteps(noRefusal).find((s) => s.run.includes("npm install -g"));
+    expect(step?.run).toContain(NPM_FLOOR);
+    expect(step?.run).not.toContain("exit 1");
   });
 });
 

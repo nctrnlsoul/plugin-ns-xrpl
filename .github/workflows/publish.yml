@@ -1,9 +1,23 @@
-# Publish to npm, with provenance.
+# Publish to npm, with provenance, authenticated by OIDC.
 #
 # Provenance is produced HERE or nowhere. npm supports it only from GitHub
 # Actions or GitLab CI, and only on a cloud-hosted runner. A publish from a
 # laptop cannot produce an attestation no matter which flags it passes, and
 # neither can a self-hosted runner.
+#
+# THERE IS NO REGISTRY TOKEN IN THIS FILE, AND THE ABSENCE IS THE MECHANISM.
+#
+# This package is registered on npm as a trusted publisher: GitHub Actions,
+# nctrnlsoul/plugin-ns-xrpl, this workflow file, allowed action `npm publish`
+# only. npm mints a short-lived credential from the OIDC token granted below,
+# and that is also what answers npm's 2FA requirement. The earlier version of
+# this file passed NODE_AUTH_TOKEN from secrets.NPM_TOKEN, and every CI attempt
+# died on EOTP, because a granular access token cannot answer a 2FA challenge.
+#
+# So a token reappearing here is a REGRESSION, not a fallback. It would be a
+# long-lived credential in a repo that no longer needs to hold one, and it would
+# let a publish succeed by a route the trusted publisher configuration never
+# authorised. The absence is asserted, and a mutation puts the env block back.
 #
 # Four things npm needs before it will attach an attestation. It does not fail
 # loudly on all four, which is the reason this file has tests:
@@ -18,10 +32,13 @@
 # sources for one setting is a place they can disagree, and the disagreement
 # would be silent.
 #
-# src/__tests__/publish-workflow.test.ts asserts all four against this file, and
-# checks/mutations.ts breaks each one and demands the suite go red. The tests
-# read this file with comments STRIPPED, because a directive written in a
+# src/__tests__/publish-workflow.test.ts asserts all of that against this file,
+# and checks/mutations.ts breaks each one and demands the suite go red. The
+# tests read this file with comments STRIPPED, because a directive written in a
 # comment is not a directive, and prose above a step does not move the step.
+# This header is itself the trap that proves the stripping is load-bearing: it
+# names --provenance, NODE_AUTH_TOKEN and secrets.NPM_TOKEN, so any check that
+# grepped the raw text would go red on a correct workflow.
 
 name: publish
 
@@ -52,6 +69,34 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      # Trusted publishing needs npm 11.5.1 or later, which npm states itself.
+      # It is the one precondition in this file that belongs to the RUNNER
+      # rather than to the repo, so it cannot be pinned here and no test here
+      # can see it.
+      #
+      # MEASURED, from nodejs.org/dist/index.json rather than from memory: the
+      # newest Node 24 at the time of writing, v24.20.0, bundles npm 11.19.0,
+      # and every Node from v24.5.0 up bundles at least 11.5.1, while v24.4.1
+      # and older bundle 11.4.2 or lower. That is high enough. It is raised
+      # anyway, because the node-version above floats and resolves to whatever
+      # GitHub picks on the day, which is not a fact this repo can measure in
+      # advance or hold still.
+      #
+      # The raise is not the guard. The CHECK is, and it exits non-zero rather
+      # than printing a version into a log nobody reads. It sits ahead of the
+      # gate deliberately: below the floor this job should die in seconds, not
+      # fifteen minutes later at the one-way door.
+      - name: Ensure npm can use trusted publishing
+        run: |
+          MIN=11.5.1
+          npm install -g "npm@^$MIN"
+          NPM_V="$(npm --version)"
+          echo "npm in this job: $NPM_V"
+          if [ "$(printf '%s\n%s\n' "$NPM_V" "$MIN" | sort -V | head -n1)" != "$MIN" ]; then
+            echo "npm $NPM_V is below $MIN, which is what trusted publishing requires." >&2
+            exit 1
+          fi
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -69,5 +114,3 @@ jobs:
 
       - name: Publish
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,4 +1,4 @@
-302
+312
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -157,5 +157,34 @@
 # the suite and fails at the registry, after the gate is green and the tag is
 # already pushed. The canonical case was measured from the GitHub API, not
 # assumed.
+#
+# Raised from 302 to 312 when the package became a TRUSTED PUBLISHER on npm and
+# the registry token left this repo. Five of the ten are an INVERSION rather
+# than an addition: NODE_AUTH_TOKEN from secrets.NPM_TOKEN used to be the thing
+# to assert PRESENT, and is now a regression to assert ABSENT. The old path died
+# on EOTP on every CI attempt, because a granular access token cannot answer
+# npm's 2FA challenge and an OIDC exchange can.
+#
+# Those five are not one assertion five ways. The publish step is asserted to
+# declare no `env:` AT ALL, read from the step's own lines rather than from a
+# search for the one key name that used to be wrong, because a check that looks
+# for a name reports nothing about an env block holding some other credential.
+# The whole file is separately asserted to contain no `secrets.` expression, at
+# a threshold of ANY occurrence in ANY position, since a job-level env block
+# authenticates the publish exactly as well while satisfying a check that only
+# ever reads the publish step. Both names are then proved to be present in the
+# RAW file and absent after stripping, which is the same trap the --provenance
+# tests carry: the header names them deliberately, so a grep-the-file
+# implementation would go red on a correct workflow.
+#
+# The other five are the npm floor, and they are about a precondition that
+# belongs to the RUNNER. Trusted publishing needs npm 11.5.1 or later, and
+# node-version floats, so what lands is GitHub's decision on the day and no test
+# here can read it. What is pinnable is that the workflow raises npm, that it
+# does so BEFORE the gate rather than behind fifteen minutes of it, and that it
+# EXITS NON-ZERO below the floor instead of printing a version into a log. That
+# last one is the only one that matters and it is proved against the real file:
+# strip the comparison out and the step still installs npm and still names
+# 11.5.1, so every assertion but the `exit 1` one still passes.
 #
 # If you lower this, say why in the commit message.

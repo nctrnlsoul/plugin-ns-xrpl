@@ -1006,9 +1006,9 @@ const MUTATIONS: Mutation[] = [
   {
     id: "workflow-verify-after-publish",
     file: ".github/workflows/publish.yml",
-    find: "      - name: Verify\n        run: bun run verify\n\n      - name: Publish\n        run: npm publish --access public\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+    find: "      - name: Verify\n        run: bun run verify\n\n      - name: Publish\n        run: npm publish --access public",
     replace:
-      "      - name: Publish\n        run: npm publish --access public\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}\n\n      - name: Verify\n        run: bun run verify",
+      "      - name: Publish\n        run: npm publish --access public\n\n      - name: Verify\n        run: bun run verify",
     why: "both steps present, both green, and the gate now runs AFTER the one-way door. This is the ordering a check anchored on text position cannot see, because the file discusses publishing above the verify step",
   },
   {
@@ -1024,6 +1024,62 @@ const MUTATIONS: Mutation[] = [
     find: "        run: npm publish --access public",
     replace: "        run: npm publish --access public --provenance",
     why: "two sources for one setting, and it reads as belt and braces. They can disagree, and package.json is the one a consumer can inspect",
+  },
+
+  // -------------------------------------------------------------------------
+  // Authentication, which is a different subject from attestation and arrived
+  // later. npm now authenticates this workflow as a registered trusted
+  // publisher, so the first two below reintroduce a REQUIREMENT that has become
+  // a regression: the registry token this file used to carry. The old path died
+  // on EOTP every time, because a granular access token cannot answer npm's 2FA
+  // challenge, and OIDC can.
+  //
+  // The job-level one is the one worth naming. It authenticates the publish
+  // exactly as the step-level env did, and a check that reads only the publish
+  // step reports nothing about it.
+  //
+  // The last three are the npm floor. Trusted publishing needs npm 11.5.1, the
+  // runner decides what npm it has, and no test in this repo can see the runner.
+  // What is testable is that the workflow raises it and then REFUSES below the
+  // floor, which is why one of these deletes only the `exit 1` and leaves a
+  // check that still runs and still prints and no longer stops anything.
+  // -------------------------------------------------------------------------
+  {
+    id: "workflow-npm-token-reintroduced",
+    file: ".github/workflows/publish.yml",
+    find: "        run: npm publish --access public",
+    replace:
+      "        run: npm publish --access public\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+    why: "the credential path back in the step it used to live in. A standing long-lived secret in a repo that no longer needs to hold one, publishing by a route the trusted publisher configuration never authorised",
+  },
+  {
+    id: "workflow-npm-token-at-job-level",
+    file: ".github/workflows/publish.yml",
+    find: "    runs-on: ubuntu-latest",
+    replace:
+      "    runs-on: ubuntu-latest\n    env:\n      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+    why: "the same credential one level up, where a check that reads only the publish step cannot see it. Every step in the job receives it and the publish authenticates exactly as it used to",
+  },
+  {
+    id: "workflow-npm-raise-removed",
+    file: ".github/workflows/publish.yml",
+    find: '          npm install -g "npm@^$MIN"\n',
+    replace: "",
+    why: "the npm version left to whatever the runner happens to ship. Below 11.5.1 there is no trusted publishing, and with no token either, the job reaches the registry with nothing to authenticate with, after the gate has already run",
+  },
+  {
+    id: "workflow-npm-floor-refusal-removed",
+    file: ".github/workflows/publish.yml",
+    find: "            exit 1\n",
+    replace: "",
+    why: "the version check still runs, still prints its complaint, and no longer fails the job. A guard that reports instead of acting, which is the shape this entire file exists to catch",
+  },
+  {
+    id: "workflow-npm-floor-lowered",
+    file: ".github/workflows/publish.yml",
+    find: "          MIN=11.5.1",
+    replace: "          MIN=11.0.0",
+    why: "the floor moved below what npm requires, so the check passes on an npm that cannot do trusted publishing at all. The step still exists and still refuses something, just not the thing that decides whether this works",
   },
   {
     id: "package-repository-case-drifted",
