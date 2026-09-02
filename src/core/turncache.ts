@@ -1,8 +1,10 @@
 // One lookup per turn, decided here rather than inside the provider's closure.
 //
 // Why a cache exists at all: the provider declares alwaysInResponseState, which
-// puts it in the stage-1 router prompt as well as the stage-2 planner's, so the
-// runtime can ask it more than once per turn.
+// puts it in the stage-1 response state as well as the stage-2 planner's, so the
+// runtime can ask it more than once per turn. CAN, not will. Whether the runtime
+// goes on to run the planner stage depends on what stage 1 produces, so the
+// second ask is what this absorbs when it happens, not something it assumes.
 //
 // PROVENANCE OF THE NUMBER, because it is stated as measured and this repo does
 // not produce it. 718ms then 571ms, two full network reads of identical data in

@@ -117,28 +117,34 @@ says so when they do rather than presenting one index for both.
 
 ## Where this sits in the elizaOS message path
 
-Worth reading before you rely on it, because the default position for a provider
-is not the one you would assume.
+Worth reading before you rely on it, because where a provider's text lands is not
+where you would assume.
 
-ElizaOS answers a message in two stages. **Stage 1** (`RESPONSE_HANDLER`) is a
-router: it decides whether to reply at all and which actions to plan, and its
-prompt contains **no provider data**. **Stage 2** (`ACTION_PLANNER`) is where an
-ordinary provider runs and where its text reaches the model.
+ElizaOS answers a message in two stages. **Stage 1** (`RESPONSE_HANDLER`) decides
+whether to reply at all and which actions to plan. Its prompt is built by
+`composeResponseState` from a fixed list of providers plus whatever declares
+`alwaysInResponseState`, so an ordinary provider is not in it. **Stage 2**
+(`ACTION_PLANNER`) is where an ordinary provider runs. Depending on what stage 1
+produces, the runtime may or may not go on to run that second planner stage.
 
-The gap that matters: if the model writes a stage-1 reply of its own, stage 2
-never runs. A short answer to "what is the balance of r..." is exactly the kind
-of reply a router emits, so the provider is never asked, and the model answers
-from its own priors with `didRespond: true` and no error anywhere. That is the
-same silence a thrown refusal produces, one stage earlier.
+`XRPL_ACCOUNT` therefore declares **`alwaysInResponseState: true`**, and it is
+worth being exact about what that buys, because it is narrower than the flag
+sounds: **the report is composed into the stage-1 response state regardless of
+which contexts the turn selects.** That is the whole of it. It is not a claim
+that the provider would otherwise go unasked, and it is not a claim about what
+the model would answer without it.
 
-`XRPL_ACCOUNT` therefore declares **`alwaysInResponseState: true`**, which is the
-only flag that puts a provider into the stage-1 prompt. It is what stops the
-router answering an XRPL question from priors. Two things follow, and both are
-costs you are choosing:
+What is measured here, against the real runtime in
+`src/__tests__/runtime-integration.test.ts`: with the flag, the report is in the
+prompt stage 1 is handed. With the flag off and nothing else changed, the report
+is absent from that prompt and nothing is looked up during stage 1.
 
-- **The provider can be asked more than once per turn**, once for the router and
-  again for the planner. An in-turn cache absorbs that, keyed on the agent id,
-  the message id, the validated address and the count of addresses that were not
+Two things follow, and both are costs you are choosing:
+
+- **The provider can be asked more than once per turn**, once for the response
+  state and, on a turn where the runtime goes on to run the planner stage, again
+  for that. An in-turn cache absorbs the repeat, keyed on the agent id, the
+  message id, the validated address and the count of addresses that were not
   looked up, so one turn performs one lookup. Entries live 30 seconds and are
   bounded at 64. A cache miss is never an error: it degrades to the second
   lookup, never to a wrong answer.

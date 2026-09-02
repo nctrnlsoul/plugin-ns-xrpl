@@ -1112,9 +1112,10 @@ const MUTATIONS: Mutation[] = [
   // -------------------------------------------------------------------------
   // THE STAGE-1 FLAG, AND THE IN-TURN CACHE IT MADE NECESSARY.
   //
-  // The flag is one line and it is the only reason this provider is asked at
-  // all on a turn the router answers by itself. The cache is what stops the
-  // flag buying that with two network reads of identical data per turn.
+  // The flag is one line and it is the only thing putting this provider's report
+  // into the stage-1 response state, whichever contexts a turn selects. The cache
+  // is what stops that guarantee being paid for with two network reads of
+  // identical data on a turn that asks twice.
   //
   // Half of the cache is a PARTITION KEY, so half of the entries below are the
   // key admitting something it cannot safely partition on. A key is not a
@@ -1126,7 +1127,7 @@ const MUTATIONS: Mutation[] = [
     file: "src/provider.ts",
     find: "    alwaysInResponseState: true,",
     replace: "    alwaysInResponseState: false,",
-    why: "without the flag the provider is absent from the stage-1 router prompt, so the router answers an XRPL question from its own priors and stage 2, where it would have run, never happens",
+    why: "without the flag the report is absent from the stage-1 prompt and no lookup runs during stage 1, so whether the model ever sees it depends on which contexts the turn selects. The flag's one guarantee is gone and nothing reports that",
   },
   {
     id: "always-in-response-state-cancelled-by-private",

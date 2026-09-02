@@ -190,10 +190,11 @@
 # If you lower this, say why in the commit message.
 # Raised from 312 to 361 by the STAGE-1 flag and the in-turn cache it made
 # necessary. The flag is the larger half. ElizaOS answers in two stages, and the
-# stage-1 router prompt contains no provider data at all, so a router that
-# replies by itself means stage 2 never runs and this provider is never asked:
-# the same silence the whole package exists to prevent, arriving one stage
-# earlier and with didRespond=true beside it.
+# stage-1 prompt is composed from a fixed provider list plus whatever declares
+# alwaysInResponseState, so without the flag this provider's report is absent
+# from it and no lookup runs during stage 1. The flag guarantees the report is
+# composed into the stage-1 response state whichever contexts the turn selects.
+# That is the whole guarantee, and it is narrower than it sounds.
 #
 # Three of the new tests drive the REAL stage 1 through
 # DefaultMessageService.handleMessage with a stub RESPONSE_HANDLER model that

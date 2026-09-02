@@ -201,19 +201,21 @@ describe("the refusal survives the real runtime and reaches the prompt", () => {
 });
 
 // ---------------------------------------------------------------------------
-// STAGE 1. The second half of the same finding, and the one composeState above
-// cannot see.
+// STAGE 1. Where the report lands, which the composeState tests above cannot
+// see.
 //
-// ElizaOS answers in two stages. Stage 1 (RESPONSE_HANDLER) is a router, and its
-// prompt is built by composeResponseState, which composes a FIXED list of
-// providers plus whatever declares alwaysInResponseState. Stage 2
-// (ACTION_PLANNER) is where an ordinary provider runs. If the model writes a
-// stage-1 reply of its own, stage 2 never runs, the provider is never asked, and
-// the model answers the XRPL question from its priors with didRespond=true and
-// no error anywhere. That is the same silence as a thrown refusal, arriving one
-// stage earlier.
+// ElizaOS answers in two stages. Stage 1 (RESPONSE_HANDLER) has its prompt built
+// by composeResponseState, which composes a FIXED list of providers plus whatever
+// declares alwaysInResponseState. Stage 2 (ACTION_PLANNER) is where an ordinary
+// provider runs, and depending on what stage 1 produces the runtime may or may
+// not go on to run that second stage.
 //
-// So this drives the REAL stage 1: DefaultMessageService.handleMessage, with a
+// So the flag's guarantee is narrow and these tests pin exactly it and nothing
+// wider: the report is composed into the stage-1 response state whichever
+// contexts the turn selects. Nothing below claims the provider would otherwise go
+// unasked, or anything about what the model would answer.
+//
+// This drives the REAL stage 1: DefaultMessageService.handleMessage, with a
 // stub RESPONSE_HANDLER model that records the prompt it is handed. What is
 // asserted is the report text inside that prompt, not a property on an object.
 // ---------------------------------------------------------------------------

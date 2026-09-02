@@ -1,8 +1,10 @@
 // The in-turn cache, tested through the provider rather than through the module.
 //
 // Why it exists at all: the provider now carries alwaysInResponseState, which
-// puts it in the stage-1 router prompt as well as the stage-2 planner's, so the
-// runtime can ask it more than once per turn.
+// puts it in the stage-1 response state as well as the stage-2 planner's, so the
+// runtime CAN ask it more than once per turn. Whether it does depends on whether
+// that turn goes on to run the planner stage, so the repeat is what this absorbs
+// when it happens, not something the cache assumes.
 //
 // PROVENANCE, because the number is stated as measured and this file does not
 // produce it. "718ms then 571ms, two full network reads of identical data in one

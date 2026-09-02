@@ -23,16 +23,25 @@
 // clock of a lookup is a security bound and not a performance preference. Hence
 // the shared budget below.
 //
-// THE SAME SILENCE, ONE STAGE EARLIER. ElizaOS answers in two stages. Stage 1
-// (RESPONSE_HANDLER) is a router and its prompt contains no provider data at
-// all; stage 2 (ACTION_PLANNER) is where an ordinary provider runs. If the model
-// writes a stage-1 reply of its own, stage 2 never runs, this provider is never
-// asked, and the model answers the XRPL question from its priors with
-// didRespond=true and no error anywhere. `alwaysInResponseState` is the only
-// flag that puts a provider into the stage-1 prompt, which is why the object
-// returned below carries it, and why `private` must never be set beside it:
-// alwaysOnResponseStateProviderNames requires `alwaysInResponseState && name &&
-// !provider.private`, so `private` cancels the flag in silence.
+// WHERE THE REPORT LANDS, which is a separate matter from the silence above.
+// ElizaOS answers in two stages. Stage 1 (RESPONSE_HANDLER) builds its prompt
+// with composeResponseState, from a fixed provider list plus whatever declares
+// alwaysInResponseState; stage 2 (ACTION_PLANNER) is where an ordinary provider
+// runs, and depending on what stage 1 produces the runtime may or may not go on
+// to run that second stage.
+//
+// `alwaysInResponseState` is the only flag that puts a provider into the stage-1
+// prompt, which is why the object returned below carries it. What it guarantees
+// is narrow, and is stated narrowly on purpose: the report is composed into the
+// stage-1 response state whichever contexts the turn selects. Measured against
+// the real runtime in src/__tests__/runtime-integration.test.ts, with the flag
+// off and nothing else changed, the report is absent from that prompt and no
+// lookup runs during stage 1. That is the claim. It is not a claim that the
+// provider would otherwise go unasked, nor one about what the model would answer.
+//
+// `private` must never be set beside the flag: alwaysOnResponseStateProviderNames
+// requires `alwaysInResponseState && name && !provider.private`, so `private`
+// cancels the flag in silence.
 
 import type { IAgentRuntime, Memory, Provider, ProviderResult, State } from "@elizaos/core";
 import { ADDRESS_CANDIDATE_PATTERN, validateXrplAddress } from "./core/address.ts";
@@ -389,9 +398,10 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
     name: "XRPL_ACCOUNT",
     description:
       "Public XRPL ledger data (XRP balance and trust lines) for a classic address mentioned in the conversation. Read-only.",
-    // Stage 1 is a router whose prompt otherwise contains no provider data at
-    // all. Without this the router answers an XRPL question from its priors and
-    // stage 2, where this provider would have run, never happens.
+    // Stage 1 builds its prompt from a fixed provider list plus whatever carries
+    // this flag. With it, the report is composed into the stage-1 response state
+    // whichever contexts the turn selects; without it, the report is absent from
+    // that prompt and no lookup runs during stage 1.
     //
     // `private` is deliberately absent and must stay absent: the runtime cancels
     // this flag whenever `private` is truthy, and says nothing when it does.
