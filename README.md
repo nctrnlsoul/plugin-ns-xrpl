@@ -1,3 +1,5 @@
+![NorthSchema plugin-xrpl](images/banner.jpg)
+
 # @northschema/plugin-xrpl
 
 Reads public XRPL ledger state for elizaOS agents.
