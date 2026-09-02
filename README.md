@@ -1,4 +1,4 @@
-![NorthSchema plugin-xrpl](images/banner.jpg)
+![NorthSchema plugin-xrpl](https://raw.githubusercontent.com/nctrnlsoul/plugin-ns-xrpl/main/images/banner.jpg)
 
 # @northschema/plugin-xrpl
 
