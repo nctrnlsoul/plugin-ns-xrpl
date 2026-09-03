@@ -52,6 +52,25 @@ const FOURTH = "rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B";
  */
 const poison = (address: string) => `${address.slice(0, 20)}\u200B${address.slice(20)}`;
 
+/** Base58-safe uppercase. Ripple's alphabet has no I and no O. */
+const SAFE = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+/**
+ * A fragment holding `n` DISTINCT address-shaped runs, not one of which is an
+ * address.
+ *
+ * DISTINCT is the whole point: the checksum budget is charged per distinct run,
+ * so `n` copies of ONE run cost one charge and cap nothing. Not addresses, so
+ * the hidden COUNT stays at zero and the capped FLAG is the only component of
+ * the digest that moves between two turns built with and without this.
+ */
+const capping = (n: number) =>
+  Array.from({ length: n }, (_, i) => {
+    const hi = SAFE[Math.floor(i / SAFE.length) % SAFE.length];
+    const lo = SAFE[i % SAFE.length];
+    return poison(`r${hi}${lo}${"B".repeat(25)}`);
+  }).join(" ");
+
 /** The name on an other_address_not_retrieved line, read off that line alone. */
 const echoedLine = (text: string, address: string) =>
   new RegExp(`^ {2}other_address_not_retrieved\\[\\d+\\]: ${address}\\.`, "m").test(text);
@@ -362,6 +381,89 @@ describe("the key admits a turn, or the turn is not cached at all", () => {
     expect(two.text ?? "", "it must state the count ITS message produced").toMatch(
       /^ {2}addresses_hidden_by_invisible_characters: 2\b/m,
     );
+  });
+
+  it("two turns sharing one id, one CAPPED and one not, never share a report", async () => {
+    // DEFECT 2 of the narrow repair, and F8's defect a third time over. The
+    // digest carried the skipped identities and the hidden COUNT and not the
+    // capped FLAG, so these two turns were ONE key.
+    //
+    // It is the worst field to lose it on. `capped` is the notice that says the
+    // report is INCOMPLETE, so one direction serves an incompleteness that never
+    // happened and the other drops one that did. A report that silently stops
+    // saying INCOMPLETE reads as a complete one, which is invariant 10 inverted.
+    //
+    // The two messages are built so that EVERY other component agrees: same
+    // agentId, same message.id, same subject, empty skipped list either side,
+    // and a hidden count of zero either side, because none of the junk runs
+    // passes a checksum. The capped flag is the only thing that differs.
+    const fetchImpl = okFetch();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never, now: () => 1_000 });
+    const runtime = rt(AGENT_A);
+    const id = randomUUID();
+    const overBudget = capping(BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE + 1);
+
+    const one = await provider.get(runtime, msg(`balance of ${ADDR}`, id), undefined as never);
+    expect(one.data?.xrplCache, "setup: the first turn must be cacheable").toBe("miss");
+    expect(one.data?.xrplAddressChecksCapped, "setup: turn one is NOT capped").toBe(false);
+    expect(one.data?.xrplHiddenAddresses, "setup: and hides nothing").toBe(0);
+    expect(one.text ?? "", "setup: so it carries no cap notice").not.toContain(
+      "address_checks_capped",
+    );
+    const afterFirst = fetchImpl.mock.calls.length;
+
+    const two = await provider.get(
+      runtime,
+      msg(`balance of ${ADDR} ${overBudget}`, id),
+      undefined as never,
+    );
+    expect(two.data?.xrplAddressChecksCapped, "setup: turn two IS capped").toBe(true);
+    expect(
+      two.data?.xrplHiddenAddresses,
+      "setup: and its hidden COUNT is identical, so only the flag differs",
+    ).toBe(0);
+
+    expect(two.data?.xrplCache, "a different capped flag is a different key").toBe("miss");
+    expect(
+      fetchImpl.mock.calls.length,
+      "and the second turn really did its own lookup",
+    ).toBeGreaterThan(afterFirst);
+    expect(two.text ?? "", "it must state the incompleteness ITS message produced").toMatch(
+      /^ {2}address_checks_capped: \d+\b/m,
+    );
+  });
+
+  it("the CAPPED turn first: the notice is not carried into a turn that had none", async () => {
+    // The other direction, and it is the one that loses a true statement rather
+    // than inventing a false one. Ordering matters because a cache serves
+    // whichever turn arrived first, so a key that cannot tell them apart is
+    // wrong both ways round and only one way round is visible per test.
+    const fetchImpl = okFetch();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never, now: () => 1_000 });
+    const runtime = rt(AGENT_A);
+    const id = randomUUID();
+    const overBudget = capping(BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE + 1);
+
+    const one = await provider.get(
+      runtime,
+      msg(`balance of ${ADDR} ${overBudget}`, id),
+      undefined as never,
+    );
+    expect(one.data?.xrplCache, "setup: the first turn must be cacheable").toBe("miss");
+    expect(one.data?.xrplAddressChecksCapped, "setup: turn one IS capped").toBe(true);
+    const afterFirst = fetchImpl.mock.calls.length;
+
+    const two = await provider.get(runtime, msg(`balance of ${ADDR}`, id), undefined as never);
+    expect(two.data?.xrplCache, "a different capped flag is a different key").toBe("miss");
+    expect(
+      fetchImpl.mock.calls.length,
+      "and the second turn really did its own lookup",
+    ).toBeGreaterThan(afterFirst);
+    expect(
+      two.text ?? "",
+      "a turn whose scan finished must never be served an incompleteness",
+    ).not.toContain("address_checks_capped");
+    expect(two.data?.xrplAddressChecksCapped).toBe(false);
   });
 
   it("two turns sharing one id but naming the further addresses in a DIFFERENT ORDER never share a report", async () => {

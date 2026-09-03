@@ -1568,3 +1568,64 @@ describe("KNOWN GAP: a hidden address that is ALSO mistyped says nothing", () =>
     expect(r.text ?? "", "and never quotes it").not.toContain(broken);
   });
 });
+
+// DEFECT 1 of the narrow repair, at the provider rather than at the scanner.
+//
+// The scanner-level assertions live in address.test.ts. This is the one that
+// names the actual harm, because the count was never wrong: no checksum ever
+// passed. What was wrong was the CAP NOTICE, and a notice only exists once the
+// provider has spoken. MEASURED against the per-run charge: this exact message
+// produced a 565-character NO_READABLE_ADDRESS refusal about an XRPL account
+// that does not exist, on a turn holding no XRPL content at all, with no
+// rate-limit slot charged and no network call to contradict it.
+//
+// silent() exists for exactly this turn. Speaking on it is the cost it was
+// written to avoid.
+describe("a repeated ordinary word never produces a refusal about an account", () => {
+  const SHY = "\u00AD";
+  const REPEATED = `runtime${SHY}ConfigurationSnapshot`;
+  const text = Array.from(
+    { length: BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE + 1 },
+    () => REPEATED,
+  ).join(" ");
+
+  it("is SILENT for 65 repetitions of one hyphenated word", async () => {
+    // Rule 95: prove the setup. "No refusal" is true of any message that names
+    // nothing, so the scan really must find nothing readable and really must
+    // hold no candidate.
+    expect(text.match(ADDRESS_CANDIDATE_PATTERN), "setup: no candidate").toBeNull();
+    expect(countUnreadableAddressRuns(text, []), "setup: nothing readable either").toBe(0);
+
+    const fetchImpl = vi.fn();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never });
+    const r = await provider.get(rt, msg(text), undefined as never);
+
+    expect((r.text ?? "").trim(), "total silence, never a refusal").toBe("");
+    expect(r.values?.xrplRefusalCode, "and no refusal code").toBeUndefined();
+    expect(r.data?.attempted, "nothing was attempted").toBe(false);
+    // The KEY must be absent, not merely undefined. Setting a key to undefined
+    // creates an own property, which is how a earlier round tested absence and
+    // never actually tested it.
+    expect(Object.hasOwn(r.data ?? {}, "xrplAddressChecksCapped"), "no cap field").toBe(false);
+    expect(fetchImpl, "and the network is never reached").not.toHaveBeenCalled();
+  });
+
+  it("POSITIVE CONTROL: the same message carrying ONE real hidden address speaks", async () => {
+    // Without this the test above is satisfied by a provider that has gone
+    // silent about everything, which is the original defect rather than a fix.
+    const hidden = `${ADDR.slice(0, 20)}\u200B${ADDR.slice(20)}`;
+    const fetchImpl = vi.fn();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never });
+    const r = await provider.get(rt, msg(`${text} ${hidden}`), undefined as never);
+
+    expect((r.text ?? "").trim(), "it must speak").not.toBe("");
+    expect(r.values?.xrplRefusalCode, "and say why").toBe("NO_READABLE_ADDRESS");
+    expect(r.text ?? "", "naming the one account it could not read").toMatch(
+      /^ {2}addresses_hidden_by_invisible_characters: 1\b/m,
+    );
+    expect(r.text ?? "", "and claiming no cap, because none happened").not.toContain(
+      "address_checks_capped",
+    );
+    expect(fetchImpl, "still no network call").not.toHaveBeenCalled();
+  });
+});

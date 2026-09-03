@@ -439,7 +439,12 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
       // exactly what it did. Under the count form, one message.id with turn 1
       // saying "A and B" and turn 2 saying "A and C" was ONE key, so turn 2 was
       // served a report NAMING B while C went unmentioned.
-      skipped: skippedDigest(skipped, hidden.count),
+      //
+      // EVERY field of `hidden` that the report prints goes in, not just the
+      // count. `capped` is printed as its own notice and it is the notice that
+      // says the report is INCOMPLETE, so a key that drops it serves a turn an
+      // incompleteness it never had, or hides one it did.
+      skipped: skippedDigest(skipped, hidden.count, hidden.capped),
       now,
     });
     const cacheState: CacheState = key === null ? "not-cacheable" : "miss";

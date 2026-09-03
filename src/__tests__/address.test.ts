@@ -640,6 +640,101 @@ describe("the checksum budget is bounded, and the bound is stated when it bites"
   });
 });
 
+// DEFECT 1 of the narrow repair, and the block above could not see it. Every
+// fixture there is a list of DISTINCT addresses, so per-run and per-distinct-run
+// charging agree on all three of them.
+//
+// The charge read `counted.has(visible)`, and `counted` holds only the strings
+// that PASSED the checksum. A repeated run that FAILED was therefore never
+// recognised as a repeat and was charged again on every repetition.
+//
+// MEASURED end to end against that form: 65 repetitions of one hyphenated word,
+// ONE entity, spent all 64 checksums, set `capped`, and the provider answered a
+// 565-character NO_READABLE_ADDRESS refusal about an XRPL account that does not
+// exist. No checksum ever passed, so no count was wrong. The CAP NOTICE was the
+// false statement, and it says the report is INCOMPLETE, on a turn that had no
+// XRPL content in it at all.
+describe("the checksum budget is charged per DISTINCT run, never per run", () => {
+  const CAP = BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE;
+  /** Written as an escape, never as the character. CLAUDE.md, and the lint. */
+  const SHY = "\u00AD";
+
+  /** The measured reproduction: one phantom word carrying one soft hyphen. */
+  const REPEATED = `runtime${SHY}ConfigurationSnapshot`;
+
+  /** Distinct runs that are address-shaped and are NOT addresses. */
+  const distinctBroken = (n: number) =>
+    manyValidAddresses(n).map((a) => poison(`${a.slice(0, -1)}${a.at(-1) === "h" ? "j" : "h"}`));
+
+  it("the repetition fixture is what this block claims it is", () => {
+    // Rule 95: prove the setup. If the word were outside the window, or held a
+    // candidate, or happened to be a real address, every assertion below would
+    // pass for a reason this block does not name.
+    const visible = [...REPEATED].filter((c) => c !== SHY).join("");
+    expect(visible.startsWith("r"), "must start with r").toBe(true);
+    expect(visible.length, "must be inside the window").toBeGreaterThanOrEqual(25);
+    expect(visible.length).toBeLessThanOrEqual(35);
+    expect(validateXrplAddress(visible).ok, "must NOT be a real address").toBe(false);
+    expect(candidatesIn(REPEATED), "and must yield no candidate of its own").toEqual([]);
+  });
+
+  it("THE REPRODUCTION: 65 repetitions of ONE word count nothing and cap nothing", () => {
+    const text = Array.from({ length: CAP + 1 }, () => REPEATED).join(" ");
+    const scan = scanHiddenAddresses(text, candidatesIn(text));
+    expect(scan.count, "no checksum passes, so there is nothing to count").toBe(0);
+    expect(scan.capped, "and one repeated word must never exhaust the budget").toBe(false);
+  });
+
+  it("THRESHOLD: the smallest repetition that used to trip it does not trip it", () => {
+    // CAP+1 is what was measured, but the boundary is what must hold. Charged
+    // per run, exactly CAP+1 copies is the smallest message that sets the flag,
+    // so this is the case that separates the two forms by one repetition.
+    for (const reps of [CAP, CAP + 1, CAP * 4]) {
+      const text = Array.from({ length: reps }, () => REPEATED).join(" ");
+      const scan = scanHiddenAddresses(text, candidatesIn(text));
+      expect(scan.capped, `${reps} copies of one word must not cap`).toBe(false);
+      expect(scan.count, `${reps} copies of one word must count nothing`).toBe(0);
+    }
+  });
+
+  it("repetition of runs ALREADY EXAMINED never consumes budget", () => {
+    // The property stated over valid addresses rather than over the phantom, so
+    // it is not satisfied by a scanner that simply never charges for a failure.
+    // Exactly CAP distinct accounts, each written five times: 320 runs, 64
+    // entities, and the budget is charged 64 times.
+    const once = manyValidAddresses(CAP).map((a) => poison(a));
+    const text = [...once, ...once, ...once, ...once, ...once].join(" ");
+    const scan = scanHiddenAddresses(text, candidatesIn(text));
+    expect(scan.count, "still exactly the distinct accounts").toBe(CAP);
+    expect(scan.capped, "and five times the runs is still inside the budget").toBe(false);
+  });
+
+  it("counts a repeated hidden address ONCE, never once per repetition", () => {
+    // Overstating an omission is the same class of inaccuracy as hiding one, so
+    // the distinctness this charge now also enforces is asserted directly.
+    const twice = `${poison(REAL_FUNDED)} and again ${poison(REAL_FUNDED)}`;
+    expect(hiddenIn(twice), "one account, one omission").toBe(1);
+  });
+
+  it("POSITIVE CONTROL: the bound still bites on that many DISTINCT failing runs", () => {
+    // Without this the whole block is satisfied by a cap that never fires at
+    // all. These runs are distinct and every one of them fails its checksum, so
+    // the charge is what fires the flag rather than anything that succeeded.
+    const built = distinctBroken(CAP + 1);
+    expect(new Set(built).size, "setup: they must really be distinct").toBe(CAP + 1);
+    for (const run of built) {
+      const visible = [...run].filter((c) => c !== ZWSP).join("");
+      expect(validateXrplAddress(visible).ok, "setup: none may be a real address").toBe(false);
+    }
+    const text = built.join(" ");
+    expect(candidatesIn(text), "setup: no candidate survives any of them").toEqual([]);
+
+    const scan = scanHiddenAddresses(text, candidatesIn(text));
+    expect(scan.capped, "distinct runs past the budget must still say so").toBe(true);
+    expect(scan.count, "and none of them passed, so none is counted").toBe(0);
+  });
+});
+
 // The two exclusions are INDEPENDENT, and each is tested with the other unable
 // to fire. A single test that satisfied both at once would not tell them apart.
 describe("an account already reported elsewhere is never reported twice", () => {
@@ -727,10 +822,19 @@ describe("a run the candidate scanner already read is NOT counted a second time"
 
 describe("a splitter merely BESIDE an address is not a second entity", () => {
   it("counts NOTHING for adjacency, and the address is still found in every case", () => {
-    // `interrupted` is what stops this. A splitter touching an address changes
-    // nothing about whether the address can be read, so counting one would put a
-    // second omission into a report where only one entity exists, and
-    // overstating an omission is the same inaccuracy as hiding one.
+    // What stops this is the CANDIDATE-IN-RUN clause, not `interrupted`. A
+    // splitter touching an address changes nothing about whether the address
+    // can be read, so the ordinary scanner still finds it inside the very run
+    // being examined, and a run that already yielded a candidate is never
+    // counted. Counting one would put a second omission into a report where
+    // only one entity exists, and overstating an omission is the same
+    // inaccuracy as hiding one.
+    //
+    // `interrupted` is written up in scanHiddenAddresses as a pre-filter that
+    // DECIDES NOTHING, and this block is where that claim is easiest to check:
+    // every case below is also rejected one line further down. It used to be
+    // described here as what stops this, and a 60,000-case differential with it
+    // forced true changed no outcome at all.
     const cases: Array<[string, string, string[]]> = [
       ["immediately before", `${ZWSP}${REAL_FUNDED}`, [REAL_FUNDED]],
       ["immediately after", `${REAL_FUNDED}${ZWSP}`, [REAL_FUNDED]],

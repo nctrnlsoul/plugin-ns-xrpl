@@ -85,8 +85,9 @@ export interface TurnCacheKeyInput {
   /** The VALIDATED address, never the raw candidate the pattern found. */
   readonly address: unknown;
   /**
-   * The DIGEST of the skipped-address list AND the unreadable-run count, from
-   * skippedDigest below. One value for both, so they cannot disagree.
+   * The DIGEST of the skipped-address list, the unreadable-run count AND the
+   * capped flag, from skippedDigest below. One value for all three, so they
+   * cannot disagree.
    *
    * A digest and not a count, because the report this key serves is determined
    * by the skipped IDENTITIES and not only by how many there were. Under the
@@ -128,22 +129,35 @@ export function isUuidLike(value: unknown): value is string {
  * lets two different messages share one entry, and the served report then
  * describes a message that was never sent.
  *
- * TWO FACTS, ONE COMPONENT. The report is determined by the skipped identities
- * AND by how many runs of address-shaped characters the message held that could
- * not be read, because the second is printed as its own notice. F8 REPRODUCED
- * the same collision one field over: same agentId, same message.id, same
+ * THREE FACTS, ONE COMPONENT. The report is determined by the skipped
+ * identities, AND by how many runs of address-shaped characters the message
+ * held that could not be read, AND by whether the checksum budget stopped the
+ * scan before it had examined them all. Each of the last two is printed as its
+ * own notice, so each of them determines the report.
+ *
+ * F8 REPRODUCED the collision on the count: same agentId, same message.id, same
  * subject, same skipped list, one poisoned run in turn 1 and two in turn 2.
  * Turn 2 was served turn 1's report, which states one, and the second run
- * vanished with every count in the served report still adding up. Two
- * components would be two values that can disagree; hashing them together is
- * what makes disagreement unrepresentable.
+ * vanished with every count in the served report still adding up.
+ *
+ * The capped flag was the SAME defect one field over, and it is the worse half:
+ * `capped` says the report is INCOMPLETE. Two turns sharing a caller-supplied
+ * message.id, identical but for the cap, were one key, so one of them was
+ * served an incompleteness notice for a scan that finished, or lost the notice
+ * for a scan that did not. A report that silently drops "this is incomplete"
+ * reads as a complete one, which is invariant 10 inverted.
+ *
+ * Three components would be three values that can disagree; hashing them
+ * together is what makes disagreement unrepresentable.
  *
  * Null on anything that is not a list of strings, and null is the safe
  * direction: no key means the real work runs twice, which is the behaviour this
  * module removes rather than one it breaks. A non-string entry cannot be
  * rendered and cannot be compared as one, so digesting it would key on a
  * coercion. The same holds for the count: a fractional, negative or non-finite
- * one is a number nothing in this package can have measured.
+ * one is a number nothing in this package can have measured. And for the flag:
+ * the scan either finished or it did not, so anything that is not a boolean is
+ * an answer no scan produced.
  *
  * Order and length are both carried, because the report prints the names in
  * order and counts them.
@@ -156,7 +170,11 @@ export function isUuidLike(value: unknown): value is string {
  * gets a shared cache entry rather than anything it could not already have
  * supplied.
  */
-export function skippedDigest(candidates: unknown, unreadable: unknown): string | null {
+export function skippedDigest(
+  candidates: unknown,
+  unreadable: unknown,
+  capped: unknown,
+): string | null {
   if (!Array.isArray(candidates)) return null;
   for (const c of candidates) {
     if (typeof c !== "string") return null;
@@ -164,9 +182,21 @@ export function skippedDigest(candidates: unknown, unreadable: unknown): string 
   if (typeof unreadable !== "number" || !Number.isSafeInteger(unreadable) || unreadable < 0) {
     return null;
   }
+  // A BOOLEAN or nothing, the same discipline the count gets. `!!capped` and
+  // `capped ?? false` both always produce a component, and a component that
+  // always exists is one that can never say "do not cache this turn". Rule 7,
+  // and checks/failopen_lint.ts fails the build on that shape.
+  if (typeof capped !== "boolean") return null;
+
+  // The two scalars in a FIXED position ahead of the list, each followed by the
+  // separator, which is what stops either of them being confused with a member
+  // of the list or with each other. Built in two statements only so no line runs
+  // past the formatter's width; the string is exactly the concatenation it
+  // reads as.
+  const scalars = `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}${String(capped)}`;
   return createHash("sha256")
     .update(
-      `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,
+      `${scalars}${TURN_CACHE_KEY_SEPARATOR}${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,
       "utf8",
     )
     .digest("hex");

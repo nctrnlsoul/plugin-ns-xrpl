@@ -33,8 +33,12 @@ const ADDR = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
 const PEER = "rKUK9omZqVEnraCipKNFb5q4tuNTeqEDZS";
 const THIRD = "rNjV3CeZ8puSpeiZqDmjAvfwxufLsiYRRX";
 
-/** The digest a turn that skipped nothing and read every run carries. */
-const NO_SKIPPED = String(skippedDigest([], 0));
+/**
+ * The digest a turn that skipped nothing, read every run, and finished its scan
+ * carries. All three components at rest, so any test that changes one of them
+ * changes exactly one thing.
+ */
+const NO_SKIPPED = String(skippedDigest([], 0, false));
 
 const GOOD = { agentId: AGENT, messageId: MESSAGE, address: ADDR, skipped: NO_SKIPPED, now: 1_000 };
 
@@ -115,42 +119,42 @@ describe("the UUID shape is checked, not assumed", () => {
 // one value and cannot disagree.
 describe("the skipped digest is determined by what the report is determined by", () => {
   it("digests a list of strings to a fixed lowercase hex shape", () => {
-    const d = skippedDigest([PEER], 0);
+    const d = skippedDigest([PEER], 0, false);
     expect(d, "a list of strings must produce a digest").not.toBeNull();
     expect(d).toMatch(/^[0-9a-f]{64}$/);
     expect(NO_SKIPPED, "and so must the empty list").toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("is stable: the same list twice is the same digest", () => {
-    expect(skippedDigest([PEER, THIRD], 0)).toBe(skippedDigest([PEER, THIRD], 0));
+    expect(skippedDigest([PEER, THIRD], 0, false)).toBe(skippedDigest([PEER, THIRD], 0, false));
   });
 
   it("THRESHOLD: two lists of the SAME LENGTH with DIFFERENT MEMBERS differ", () => {
     // The property the count form did not have, and the only one that matters:
     // one member changed, the length unchanged. A count agrees on both of these
     // and the report does not.
-    expect(skippedDigest([PEER], 0)).not.toBe(skippedDigest([THIRD], 0));
-    expect(skippedDigest([ADDR, PEER], 0)).not.toBe(skippedDigest([ADDR, THIRD], 0));
+    expect(skippedDigest([PEER], 0, false)).not.toBe(skippedDigest([THIRD], 0, false));
+    expect(skippedDigest([ADDR, PEER], 0, false)).not.toBe(skippedDigest([ADDR, THIRD], 0, false));
   });
 
   it("carries the ORDER, because the report names them in order", () => {
-    expect(skippedDigest([PEER, THIRD], 0)).not.toBe(skippedDigest([THIRD, PEER], 0));
+    expect(skippedDigest([PEER, THIRD], 0, false)).not.toBe(skippedDigest([THIRD, PEER], 0, false));
   });
 
   it("carries the LENGTH too, so a shorter list is a different digest", () => {
-    expect(skippedDigest([PEER], 0)).not.toBe(skippedDigest([PEER, THIRD], 0));
+    expect(skippedDigest([PEER], 0, false)).not.toBe(skippedDigest([PEER, THIRD], 0, false));
   });
 
   it("cannot be forged by concatenation: no two distinct lists share a digest", () => {
     // Without a separator, ["ab","c"] and ["a","bc"] concatenate to one string
     // and one digest, so two different messages would read each other's report.
-    expect(skippedDigest(["ab", "c"], 0)).not.toBe(skippedDigest(["a", "bc"], 0));
-    expect(skippedDigest(["a", "", "b"], 0)).not.toBe(skippedDigest(["a", "b"], 0));
+    expect(skippedDigest(["ab", "c"], 0, false)).not.toBe(skippedDigest(["a", "bc"], 0, false));
+    expect(skippedDigest(["a", "", "b"], 0, false)).not.toBe(skippedDigest(["a", "b"], 0, false));
   });
 
   it("REFUSES anything that is not a list, so nothing is claimed about it", () => {
     for (const bad of [undefined, null, 0, 1, "1", {}, true, new Set([PEER])]) {
-      expect(skippedDigest(bad, 0), JSON.stringify(bad)).toBeNull();
+      expect(skippedDigest(bad, 0, false), JSON.stringify(bad)).toBeNull();
     }
   });
 
@@ -167,7 +171,7 @@ describe("the skipped digest is determined by what the report is determined by",
       [[PEER]],
       [PEER, Symbol.iterator],
     ]) {
-      expect(skippedDigest(bad, 0), JSON.stringify(bad.map(String))).toBeNull();
+      expect(skippedDigest(bad, 0, false), JSON.stringify(bad.map(String))).toBeNull();
     }
   });
 
@@ -185,34 +189,64 @@ describe("the skipped digest is determined by what the report is determined by",
   it("THRESHOLD: the same list with DIFFERENT unreadable counts is a different digest", () => {
     // One, not a comfortable large number. The smallest disagreement that must
     // split the key is zero runs against one.
-    expect(skippedDigest([], 0)).not.toBe(skippedDigest([], 1));
-    expect(skippedDigest([PEER], 1)).not.toBe(skippedDigest([PEER], 2));
-    expect(skippedDigest([PEER, THIRD], 0)).not.toBe(skippedDigest([PEER, THIRD], 1));
+    expect(skippedDigest([], 0, false)).not.toBe(skippedDigest([], 1, false));
+    expect(skippedDigest([PEER], 1, false)).not.toBe(skippedDigest([PEER], 2, false));
+    expect(skippedDigest([PEER, THIRD], 0, false)).not.toBe(skippedDigest([PEER, THIRD], 1, false));
   });
 
-  it("is ONE component, so the identities and the count cannot disagree", () => {
-    // The rule F7 earned, applied to the second thing the report is determined
-    // by: A KEY MUST BE DETERMINED BY WHAT THE THING IT KEYS IS DETERMINED BY.
-    // Two components would be two values that can drift apart, which is the
+  // DEFECT 2 of the narrow repair, and it is F8's defect a third time over. The
+  // digest carried the identities and the count and NOT the capped flag, so two
+  // turns sharing a caller-supplied message.id and differing only in whether the
+  // checksum budget bit landed on ONE key.
+  //
+  // It is the worst of the three to lose, because `capped` is the notice that
+  // says the report is INCOMPLETE. One direction serves an incompleteness that
+  // did not happen; the other drops one that did, and a report that silently
+  // stops saying "this is incomplete" reads as a complete one. That is invariant
+  // 10 inverted, in the only text the model gets.
+  it("THRESHOLD: the same list and count with a DIFFERENT capped flag is a different digest", () => {
+    // false against true is the whole population of this component, so this is
+    // the threshold and the exhaustive case at once.
+    expect(skippedDigest([], 0, false)).not.toBe(skippedDigest([], 0, true));
+    expect(skippedDigest([PEER], 0, false)).not.toBe(skippedDigest([PEER], 0, true));
+    expect(skippedDigest([PEER, THIRD], 2, false)).not.toBe(skippedDigest([PEER, THIRD], 2, true));
+  });
+
+  it("is ONE component, so the identities, the count and the flag cannot disagree", () => {
+    // The rule F7 earned, applied to every thing the report is determined by:
+    // A KEY MUST BE DETERMINED BY WHAT THE THING IT KEYS IS DETERMINED BY.
+    // Three components would be three values that can drift apart, which is the
     // shape this repo keeps finding.
     const seen = new Set<string | null>();
     for (const list of [[], [PEER], [THIRD], [PEER, THIRD]]) {
       for (const runs of [0, 1, 2]) {
-        seen.add(skippedDigest(list, runs));
+        for (const capped of [false, true]) {
+          seen.add(skippedDigest(list, runs, capped));
+        }
       }
     }
-    expect(seen.size, "every (list, count) pair is its own digest").toBe(12);
+    expect(seen.size, "every (list, count, capped) triple is its own digest").toBe(24);
   });
 
   it("the count cannot be confused with a member of the list", () => {
     // The separator's job, extended to the new component. Without it a count of
     // 1 beside no addresses and no count beside the address "1" would collide.
-    expect(skippedDigest(["1"], 0)).not.toBe(skippedDigest([], 1));
-    expect(skippedDigest([], 10)).not.toBe(skippedDigest(["0"], 1));
+    expect(skippedDigest(["1"], 0, false)).not.toBe(skippedDigest([], 1, false));
+    expect(skippedDigest([], 10, false)).not.toBe(skippedDigest(["0"], 1, false));
   });
 
-  it("is stable: the same list and the same count twice is the same digest", () => {
-    expect(skippedDigest([PEER], 3)).toBe(skippedDigest([PEER], 3));
+  it("the flag cannot be confused with a member of the list or with the count", () => {
+    // The same job for the third component. The flag renders as the word "true"
+    // or "false", so a list holding those words is the collision to rule out,
+    // and a fixed position between two separators is what rules it out.
+    expect(skippedDigest(["false"], 0, false)).not.toBe(skippedDigest([], 0, false));
+    expect(skippedDigest(["true"], 0, false)).not.toBe(skippedDigest([], 0, true));
+    expect(skippedDigest([], 0, true)).not.toBe(skippedDigest(["0"], 0, true));
+  });
+
+  it("is stable: the same list, count and flag twice is the same digest", () => {
+    expect(skippedDigest([PEER], 3, false)).toBe(skippedDigest([PEER], 3, false));
+    expect(skippedDigest([PEER], 3, true)).toBe(skippedDigest([PEER], 3, true));
   });
 
   it("REFUSES a count that is not a non-negative safe integer, so nothing is keyed on it", () => {
@@ -236,12 +270,27 @@ describe("the skipped digest is determined by what the report is determined by",
       [],
       true,
     ]) {
-      expect(skippedDigest([PEER], bad), JSON.stringify(bad)).toBeNull();
+      expect(skippedDigest([PEER], bad, false), JSON.stringify(bad)).toBeNull();
     }
     // Rule 95: prove the setup. The same list WITH a usable count digests, so
     // the nulls above came from the component under test.
-    expect(skippedDigest([PEER], 0)).not.toBeNull();
-    expect(skippedDigest([PEER], Number.MAX_SAFE_INTEGER)).not.toBeNull();
+    expect(skippedDigest([PEER], 0, false)).not.toBeNull();
+    expect(skippedDigest([PEER], Number.MAX_SAFE_INTEGER, false)).not.toBeNull();
+  });
+
+  it("REFUSES a capped flag that is not a boolean, so nothing is keyed on a coercion", () => {
+    // The same discipline the count gets, and the reason is rule 7 rather than
+    // tidiness: `capped ?? false` and `!!capped` both always produce a
+    // component, and a component that always exists can never say "do not cache
+    // this turn". The truthy and falsy members below are the ones a coercion
+    // would silently accept.
+    for (const bad of [undefined, null, 0, 1, "", "true", "false", {}, [], Number.NaN]) {
+      expect(skippedDigest([PEER], 0, bad), JSON.stringify(bad)).toBeNull();
+    }
+    // Rule 95: prove the setup. The same list and count WITH a real boolean
+    // digests both ways, so the nulls above came from the component under test.
+    expect(skippedDigest([PEER], 0, false)).not.toBeNull();
+    expect(skippedDigest([PEER], 0, true)).not.toBeNull();
   });
 });
 
@@ -341,8 +390,8 @@ describe("the key admits only what it can safely partition on", () => {
     // C" in one turn were one key, so the second turn was served a report NAMING
     // B, an address its message never held, while C vanished with no notice and
     // every count still added up.
-    const withB = turnCacheKey({ ...GOOD, skipped: String(skippedDigest([PEER], 0)) });
-    const withC = turnCacheKey({ ...GOOD, skipped: String(skippedDigest([THIRD], 0)) });
+    const withB = turnCacheKey({ ...GOOD, skipped: String(skippedDigest([PEER], 0, false)) });
+    const withC = turnCacheKey({ ...GOOD, skipped: String(skippedDigest([THIRD], 0, false)) });
     expect(withB, "setup: both must actually build a key").not.toBeNull();
     expect(withC).not.toBeNull();
     expect(withB).not.toBe(withC);
@@ -352,7 +401,7 @@ describe("the key admits only what it can safely partition on", () => {
     // The report text differs by exactly the other-address lines when this
     // differs, and rule 10 says that omission is always spoken. A key that drops
     // it serves a report missing the notice.
-    expect(turnCacheKey({ ...GOOD, skipped: String(skippedDigest([PEER], 0)) })).not.toBe(
+    expect(turnCacheKey({ ...GOOD, skipped: String(skippedDigest([PEER], 0, false)) })).not.toBe(
       turnCacheKey(GOOD),
     );
   });
@@ -362,9 +411,24 @@ describe("the key admits only what it can safely partition on", () => {
     // unreadable_address_runs line, and invariant 10 says that omission is
     // always spoken, so a key that cannot tell them apart serves a report
     // missing it.
-    expect(turnCacheKey({ ...GOOD, skipped: String(skippedDigest([], 1)) })).not.toBe(
+    expect(turnCacheKey({ ...GOOD, skipped: String(skippedDigest([], 1, false)) })).not.toBe(
       turnCacheKey(GOOD),
     );
+  });
+
+  it("carries the capped flag, so an INCOMPLETENESS notice cannot be invented or lost", () => {
+    // DEFECT 2, at the key rather than at the digest. The two reports differ by
+    // exactly the address_checks_capped line, which is the line that says the
+    // report is incomplete, so a key that cannot tell them apart serves one turn
+    // the other's completeness.
+    //
+    // Both directions are named because they are different harms: served a cap
+    // notice that did not happen, the report claims an omission nothing made;
+    // served without one that did, a report that examined 64 of thousands reads
+    // as a report that examined them all.
+    const capped = turnCacheKey({ ...GOOD, skipped: String(skippedDigest([], 0, true)) });
+    expect(capped, "setup: it must actually build a key").not.toBeNull();
+    expect(capped).not.toBe(turnCacheKey(GOOD));
   });
 
   it("is stable: the same input twice is the same key", () => {

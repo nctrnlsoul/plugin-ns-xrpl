@@ -1216,22 +1216,19 @@ const MUTATIONS: Mutation[] = [
     id: "skipped-digest-ignores-the-identities",
     file: "src/core/turncache.ts",
     // Search text updated when F8 hashed the unreadable-run count into the same
-    // component. The mutation is unchanged: the identities erased, everything
-    // else kept.
-    find:
-      "      `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}" +
-      "${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,",
-    replace:
-      "      `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}${String(candidates.length)}`,",
+    // component, and again at F10 when the two scalars moved into `scalars` so
+    // no line ran past the formatter's width. The mutation is unchanged both
+    // times: the identities erased, everything else kept.
+    find: "      `${scalars}${TURN_CACHE_KEY_SEPARATOR}${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,",
+    replace: "      `${scalars}${TURN_CACHE_KEY_SEPARATOR}${String(candidates.length)}`,",
     why: "the count form wearing the digest's clothes: same shape, same length, and two same-length lists with different members still collide, which is the exact collision that served one turn's address names to another turn",
   },
   {
     id: "skipped-digest-drops-the-separator",
     file: "src/core/turncache.ts",
-    find:
-      "      `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}" +
-      "${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,",
-    replace: '      `${String(unreadable)}${candidates.join("")}`,',
+    // Search text updated at F10 with the entry above, for the same reason.
+    find: "      `${scalars}${TURN_CACHE_KEY_SEPARATOR}${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,",
+    replace: '      `${scalars}${candidates.join("")}`,',
     why: 'without a separator ["ab","c"] and ["a","bc"] concatenate to one string and one digest, so two different messages read each other\'s report. NUL cannot occur in Ripple base58, which is what makes the boundary unforgeable',
   },
   {
@@ -1643,7 +1640,7 @@ const MUTATIONS: Mutation[] = [
     // became a digest. The defect is unchanged: hand turnCacheKey something that
     // is not the shape it partitions on and every key is null.
     // Search text updated when F8 gave skippedDigest its second component.
-    find: "      skipped: skippedDigest(skipped, hidden.count),",
+    find: "      skipped: skippedDigest(skipped, hidden.count, hidden.capped),",
     replace: "      skipped,",
     why: "turnCacheKey admits only the exact digest shape and returns null for anything else, so handing it the array makes every key null, turns cacheState into not-cacheable without a word, and silently restores the doubled network lookup the cache exists to remove",
   },
@@ -1674,9 +1671,9 @@ const MUTATIONS: Mutation[] = [
     // as a digest, which is what makes it the faithful reproduction rather than
     // an approximation of it.
     // Search text updated when F8 gave skippedDigest its second component.
-    find: "      skipped: skippedDigest(skipped, hidden.count),",
+    find: "      skipped: skippedDigest(skipped, hidden.count, hidden.capped),",
     replace:
-      '      skipped: skippedDigest(\n        skipped.map(() => "x"),\n        hidden.count,\n      ),',
+      '      skipped: skippedDigest(\n        skipped.map(() => "x"),\n        hidden.count,\n        hidden.capped,\n      ),',
     why: "two turns sharing one message.id and skipping DIFFERENT single addresses land on one entry, and the second is served a report naming an address its message never held while the address it did name vanishes with no notice",
   },
   {
@@ -1806,8 +1803,8 @@ const MUTATIONS: Mutation[] = [
   {
     id: "unreadable-count-out-of-cache-key",
     file: "src/provider.ts",
-    find: "      skipped: skippedDigest(skipped, hidden.count),",
-    replace: "      skipped: skippedDigest(skipped, 0),",
+    find: "      skipped: skippedDigest(skipped, hidden.count, hidden.capped),",
+    replace: "      skipped: skippedDigest(skipped, 0, hidden.capped),",
     why: "F7's defect one field over: two turns sharing an agentId, a message.id, a subject and a skipped list but holding DIFFERENT numbers of unreadable runs land on ONE entry, and the second is served the first's report. The run vanishes with every count in the served report still adding up, which is the exact shape the digest was introduced to make unrepresentable",
   },
   {
@@ -1983,8 +1980,8 @@ const MUTATIONS: Mutation[] = [
   {
     id: "cache-key-sorts-the-skipped-list",
     file: "src/provider.ts",
-    find: "      skipped: skippedDigest(skipped, hidden.count),",
-    replace: "      skipped: skippedDigest([...skipped].sort(), hidden.count),",
+    find: "      skipped: skippedDigest(skipped, hidden.count, hidden.capped),",
+    replace: "      skipped: skippedDigest([...skipped].sort(), hidden.count, hidden.capped),",
     why: "the report prints the names IN ORDER, so a key that discards the order stops determining its own output: two turns sharing a message.id and naming the same two addresses the other way round land on ONE entry, and the second is served a report whose other_address_not_retrieved[0] names the wrong account. turncache.test.ts pins the order on the digest and structurally cannot see a caller that sorts before calling",
   },
   // -------------------------------------------------------------------------
@@ -2056,8 +2053,16 @@ const MUTATIONS: Mutation[] = [
     // de-duplicated by the add anyway. What makes the count distinct is the Set,
     // so the mutation has to defeat the Set. Recorded rather than silently
     // fixed, because a mutation that cannot fail is worse than none.
+    //
+    // SECOND REWRITE, for the same reason and recorded for the same reason. The
+    // form `counted.add(`${visible}${checksums}`)` died twice over when the
+    // budget moved to `examined`: the counter it read no longer exists, and a
+    // repeated run is now stopped by `examined.has` one line ABOVE this, so a
+    // duplicate never reaches here to be mis-keyed. Adding a SECOND entry is
+    // what still bites, and it is the same harm stated the same way: one hidden
+    // account rendered as two omissions.
     find: "    counted.add(visible);",
-    replace: "    counted.add(`${visible}${checksums}`);",
+    replace: "    counted.add(visible);\n    counted.add(`${visible}-2`);",
     why: "one account hidden twice in a message becomes two omissions. Overstating an omission is the same class of inaccuracy as hiding one, and other_addresses_not_looked_up has counted DISTINCT strings since D6 for exactly this reason",
   },
   {
@@ -2085,7 +2090,10 @@ const MUTATIONS: Mutation[] = [
   {
     id: "hidden-address-cap-removed",
     file: "src/core/address.ts",
-    find: "    if (checksums >= BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE) {",
+    // Search text updated when the charge moved from a `checksums` counter to
+    // `examined.size`. A counter beside the set is a second number that can
+    // disagree with it, which is what the per-run defect below turned out to be.
+    find: "    if (examined.size >= BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE) {",
     replace: "    if (false) {",
     why: "an uncapped double-SHA loop driven by unrated conversation text, BEFORE checkRateLimit. MEASURED at 16.6ms over a hostile 99 KB message, roughly ten times the scan without checksums, and every millisecond of it chosen by whoever is talking to the agent",
   },
@@ -2155,6 +2163,61 @@ const MUTATIONS: Mutation[] = [
     replace:
       "      `  addresses_hidden_by_invisible_characters: ${hidden}. The message held that many runs of address-shaped characters, which this plugin cannot tell apart as accounts,",
     why: "the CLAIM changed when the checksum gate landed, so the wording had to change with it. Under the gate every one counted is a checksum-valid address counted once, so the old hedge is false in the other direction: it understates what the report knows, in the only text the model gets",
+  },
+
+  // -------------------------------------------------------------------------
+  // F10. THE NARROW REPAIR. Two defects, both in the per-message checksum cap
+  // added one round earlier, both reproduced by a cold pass rather than found
+  // by anything in `bun run verify`.
+  //
+  // They share a shape worth naming, because it is the third time this repo has
+  // hit it: A BUDGET AND A KEY MUST BOTH BE KEYED ON THE SAME THING THE OUTPUT
+  // IS. The cap charged per RUN while the report counts per DISTINCT run, and
+  // the cache key carried the hidden COUNT while the report also prints the
+  // capped FLAG. Each is one value drifting from another that describes the
+  // same fact.
+  // -------------------------------------------------------------------------
+  {
+    id: "f10-checksum-cap-charged-per-run",
+    file: "src/core/address.ts",
+    // THE LEDGER, which is what actually decides the notice.
+    //
+    // FIRST ATTEMPT, recorded because it SURVIVED a full gate run and a survivor
+    // that is quietly rewritten teaches nothing. It replaced
+    // `if (examined.has(visible))` with the shipped `if (counted.has(visible))`
+    // and the suite stayed green at 559 passed. The reason is that the repair
+    // changed two independent things, and either one alone fixes the notice:
+    // the dedupe set widened from `counted` to `examined`, AND the charge became
+    // a SET SIZE rather than an integer counter. `Set.add` is idempotent, so a
+    // repeated string cannot grow `examined.size` even with the dedupe gone.
+    //
+    // So the mutation has to defeat the SIZE. Giving every add a unique key
+    // makes the set grow once per RUN, which is the shipped defect exactly, and
+    // it defeats the `has` gate in the same line because the suffixed keys never
+    // match a bare `visible`.
+    find: "    examined.add(visible);",
+    replace: "    examined.add(`${visible}${examined.size}`);",
+    why: "MEASURED: 65 repetitions of one hyphenated word, ONE entity, spent all 64 checksums and set `capped`, and the provider answered with a 565-character NO_READABLE_ADDRESS refusal about an XRPL account that does not exist. No checksum ever passed and no rate-limit slot was charged, so nothing else in the pipeline could contradict it. A bound an ordinary repeated word can exhaust is not bounding an attacker, and the notice it emits is a false statement of incompleteness in the only text the model gets",
+  },
+  {
+    id: "f10-cache-key-drops-the-capped-flag",
+    file: "src/provider.ts",
+    // The caller stops VARYING the component rather than dropping it, which is
+    // the faithful reproduction: the digest still exists and still has the right
+    // shape, so turnCacheKey builds a key and nothing reports not-cacheable.
+    find: "      skipped: skippedDigest(skipped, hidden.count, hidden.capped),",
+    replace: "      skipped: skippedDigest(skipped, hidden.count, false),",
+    why: "F8's defect a third time over, and the worst field to lose it on. Two turns sharing a caller-supplied message.id, identical but for whether the checksum budget bit, land on ONE entry. One direction serves a cap notice for a scan that finished; the other drops one for a scan that did not, and a report that silently stops saying INCOMPLETE reads as a complete one. Memory.id is caller-shaped, which is why isUuidLike exists, so the collision is reachable rather than hypothetical",
+  },
+  {
+    id: "f10-digest-drops-the-capped-component",
+    file: "src/core/turncache.ts",
+    // The same loss one layer down, because the provider-side entry above
+    // cannot see a digest that quietly stops carrying what it is handed. A guard
+    // pinned in one place is pinned by nothing.
+    find: "  const scalars = `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}${String(capped)}`;",
+    replace: "  const scalars = `${String(unreadable)}`;",
+    why: "the caller still passes hidden.capped and the validator still refuses a non-boolean, so every type check and every call site still reads correct while the component silently stops reaching the hash. Two turns differing only in the cap collide again, with nothing at the provider to show for it",
   },
 ];
 

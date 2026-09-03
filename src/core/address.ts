@@ -232,7 +232,9 @@ export interface HiddenAddressScan {
   readonly count: number;
   /**
    * True when MAX_ADDRESS_CHECKSUMS_PER_MESSAGE stopped this plugin examining
-   * every run it found, so `count` is a floor rather than a total.
+   * every DISTINCT run it found, so `count` is a floor rather than a total.
+   * Repetition of one run never sets this: the budget is charged per distinct
+   * string, so a repeated word cannot exhaust it.
    */
   readonly capped: boolean;
 }
@@ -248,13 +250,9 @@ export interface HiddenAddressScan {
  * characters. Not a wrong report about a named entity: NO report, which is the
  * worse of the two on this runtime.
  *
- * THE GATE, and it is the whole design. A run is counted only when every one of
- * these holds:
+ * THE GATE. A run is counted only when every one of these holds, and each one
+ * of them can change a result on its own:
  *
- *   interrupted                     something that renders as nothing sits
- *                                   BETWEEN two base58 characters, so a
- *                                   splitter merely BESIDE an address is not a
- *                                   second entity
  *   no candidate inside the run     the ordinary scanner already read this
  *                                   entity, so it is already reported as the
  *                                   subject, in the skipped list, or as a
@@ -264,9 +262,29 @@ export interface HiddenAddressScan {
  *                                   address, checksum included
  *   not already a raw candidate     the same account is not being described
  *                                   elsewhere in this very report
- *   not already counted             DISTINCT, matching the doctrine
+ *   not already examined            DISTINCT, matching the doctrine
  *                                   other_addresses_not_looked_up already
- *                                   follows
+ *                                   follows, and the budget ledger in the same
+ *                                   set for the same reason
+ *
+ * TWO CHEAP PRE-FILTERS SIT ABOVE THE GATE AND DECIDE NOTHING: `interrupted`,
+ * and the length-and-leading-r window. Said plainly, because both used to be
+ * written up as controls and one of them was called the whole design.
+ *
+ * MEASURED, 60,000 cases differentially with `interrupted` forced true: not one
+ * outcome changed. The reason is structural rather than lucky. A run that is
+ * NOT interrupted has all its visible characters contiguous, so if it is also
+ * inside the 25..35 window and starts with `r`, those characters ARE a raw
+ * candidate, and `CANDIDATE_IN_RUN` rejects it one line further down. Anything
+ * `interrupted` catches, the candidate clause catches too. The length window is
+ * subsumed the same way, by isValidXrplAddress, which enforces the identical
+ * bounds and the identical leading `r`.
+ *
+ * They stay because they are cheap and they say what the scanner is for: two
+ * comparisons and a boolean instead of a regex and a double SHA-256 on runs
+ * that cannot qualify. What they are NOT is defence. No mutation of either can
+ * fail, and a comment claiming otherwise answers an audit on a control's
+ * behalf, which is the src/core/node-url.ts failure CLAUDE.md records by name.
  *
  * WHY THE CHECKSUM IS LOAD-BEARING AND NOT BELT AND BRACES. Without it this
  * function counted any 25-to-35 character base58 run carrying one soft hyphen,
@@ -299,6 +317,12 @@ export interface HiddenAddressScan {
  * unrated conversation text before checkRateLimit and a checksum is a double
  * SHA-256, measured at 16.6ms uncapped over a hostile 99 KB message. When it
  * bites, `capped` says so and the report speaks it.
+ *
+ * It is charged PER DISTINCT STRING, never per run. Charged per run, ordinary
+ * repetition trips it: 65 copies of one hyphenated word spent the whole budget
+ * and produced a cap notice about a message holding one entity. A bound that a
+ * repeated word can exhaust is not bounding the attacker, and the notice it
+ * emits is a false statement in the only text the model gets.
  */
 export function scanHiddenAddresses(text: unknown, candidates: unknown): HiddenAddressScan {
   if (typeof text !== "string") return { count: 0, capped: false };
@@ -316,7 +340,25 @@ export function scanHiddenAddresses(text: unknown, candidates: unknown): HiddenA
   }
 
   const counted = new Set<string>();
-  let checksums = 0;
+  /**
+   * Every DISTINCT visible string this message has already been charged for.
+   *
+   * TWO ROLES, and they are worth telling apart because only one of them
+   * decides anything the report says:
+   *
+   *   .size   the budget ledger. It is what makes `capped` per DISTINCT run,
+   *           and a repeated string cannot move it, because Set.add is
+   *           idempotent
+   *   .has    a work bound only. Skipping a repeat saves a double SHA-256 and
+   *           changes no reported value
+   *
+   * ONE set rather than a set beside an integer counter, because a counter is a
+   * second number that can disagree with the set, and it did: the shipped form
+   * charged per RUN while `counted` deduped only what PASSED. `counted` holds
+   * the strings that passed the checksum, so it can never answer either
+   * question about a string that failed.
+   */
+  const examined = new Set<string>();
   let capped = false;
 
   for (const match of text.matchAll(HIDDEN_RUN_PATTERN)) {
@@ -338,28 +380,63 @@ export function scanHiddenAddresses(text: unknown, candidates: unknown): HiddenA
       }
     }
 
+    // THE FIRST OF THE TWO PRE-FILTERS WITH NO INDEPENDENT EFFECT, and the one
+    // that used to be written up as the whole design. A run that is not
+    // interrupted has its visible characters contiguous, so CANDIDATE_IN_RUN
+    // below rejects it for the same reason a line later. MEASURED over 60,000
+    // differential cases with this forced true: not one outcome changed.
     if (!interrupted) continue;
 
-    // A CHEAP PRE-FILTER WITH NO INDEPENDENT EFFECT, said plainly rather than
-    // dressed up as a control. MEASURED: isValidXrplAddress enforces the same
-    // window and the same leading `r`, so removing this line changes no result
-    // and no mutation of it alone can fail. It stays because it turns most
-    // rejections into two comparisons instead of a double SHA-256, and the cap
-    // above is the bound that matters rather than this.
+    // THE SECOND, and the same story: isValidXrplAddress enforces this window
+    // and this leading `r`, so removing either line changes no result and no
+    // mutation of either alone can fail. Both stay because they turn most
+    // rejections into two comparisons instead of a double SHA-256. The bound
+    // that matters is the cap below, not these.
     if (visible.length < MIN_LENGTH || visible.length > MAX_LENGTH) continue;
     if (!visible.startsWith("r")) continue;
 
     if (CANDIDATE_IN_RUN.test(run)) continue;
     if (rawCandidates.has(visible)) continue;
-    if (counted.has(visible)) continue;
+
+    // THE ONLY BOUND ON REPEATED WORK, and it decides no reported value. Said
+    // plainly, because the line below already makes every OUTPUT per-distinct
+    // and it would be easy to write this one up as doing that too.
+    //
+    // MEASURED both ways over the same input, 20,000 repetitions of one run in
+    // 586 KB: 1 checksum and 12.9ms with this line, 20,000 checksums and 67.0ms
+    // without it, and `count` and `capped` IDENTICAL either way. So this saves
+    // work and nothing else.
+    //
+    // It is not optional for that reason. The cap below counts DISTINCT strings,
+    // so it never fires on repetition however long the message: at 20,000 copies
+    // `capped` is still false. This line is therefore the whole bound on a
+    // hostile message built from ONE run, and that message is unrated
+    // conversation text arriving before checkRateLimit.
+    //
+    // KNOWN GAP, stated rather than left to be rediscovered: no test observes
+    // this, because the only observable is wall-clock and a timing assertion in
+    // this suite would be flaky. checks/mutations.ts cannot cover it either, for
+    // the same reason. It is held by this comment and by nothing else.
+    if (examined.has(visible)) continue;
 
     // Charged BEFORE the work, so a message that runs out of budget cannot
     // spend one more checksum than the bound allows.
-    if (checksums >= BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE) {
+    //
+    // `examined.size` IS the charge, and that is what makes the cap per
+    // DISTINCT string. A counter beside the set would be a second number that
+    // can disagree with it, and it did: the shipped form incremented a
+    // `checksums` integer once per RUN while `counted` deduped only the strings
+    // that PASSED, so a repeated run that FAILED was charged every time.
+    // MEASURED end to end: 65 repetitions of "runtime<U+00AD>Configuration-
+    // Snapshot", one word and one entity, spent all 64 checksums, set `capped`,
+    // and made the provider speak a 565-character refusal about an XRPL account
+    // that does not exist. No checksum ever passed, so no count was wrong; the
+    // CAP NOTICE was the false statement, on a turn with no XRPL content at all.
+    if (examined.size >= BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE) {
       capped = true;
       continue;
     }
-    checksums++;
+    examined.add(visible);
 
     if (!isValidXrplAddress(visible)) continue;
     counted.add(visible);
