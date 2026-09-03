@@ -1,7 +1,7 @@
 {
   "name": "@northschema/plugin-xrpl",
   "description": "Reads public XRPL ledger state for elizaOS agents. Read-only: no signing, no key material, no transaction submission.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
