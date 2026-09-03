@@ -16,6 +16,22 @@ export const BOUNDS = {
   MAX_TRUST_LINES_RENDERED: 25,
 
   /**
+   * Unlooked-up addresses named INDIVIDUALLY in one report.
+   *
+   * Three, and the number is measured rather than "whatever fits". A real wide
+   * 25-trust-line report already sits at 3,880 of MAX_RENDERED_CHARS and is
+   * already dropping 7 rows, so each echoed line costs roughly 0.8 trust lines
+   * of real ledger data. Three covers "compare A and B and C", which is the
+   * shape that produced the incident: a message naming two addresses, a report
+   * that described one and only COUNTED the other, and a model that invented a
+   * balance for the account nothing had named.
+   *
+   * Everything past this is still counted out loud. A cap is a reason to omit,
+   * and invariant 10 admits no reason that goes unspoken.
+   */
+  MAX_ECHOED_ADDRESSES: 3,
+
+  /**
    * Hard ceiling on the whole rendered report. This is the number that actually
    * protects the token budget: per-field caps still permit an unbounded total.
    */
@@ -23,6 +39,48 @@ export const BOUNDS = {
 
   /** Ceiling on any single ledger-sourced value. */
   MAX_FIELD_CHARS: 64,
+
+  /**
+   * How many address checksums this plugin will attempt over ONE message.
+   *
+   * The hidden-address scanner runs on unrated conversation text, BEFORE
+   * checkRateLimit, and a checksum is a double SHA-256. MEASURED on a 99 KB
+   * message crafted entirely of poisoned address-shaped runs: 16.6ms uncapped,
+   * roughly ten times the cost of the scan without checksums, all of it work an
+   * attacker chooses the size of. Linear rather than quadratic, which is why
+   * this is a cap and not a redesign.
+   *
+   * 64 is far above any real message: a message names a handful of accounts,
+   * the report NAMES at most MAX_ECHOED_ADDRESSES of them, and the widest
+   * fixture in the suite carries sixty. It is far below the thousands a hostile
+   * 99 KB message can hold.
+   *
+   * When it bites, it is SPOKEN. An omission this plugin chose for its own
+   * convenience is still an omission, and invariant 10 admits no reason that
+   * goes unspoken.
+   */
+  MAX_ADDRESS_CHECKSUMS_PER_MESSAGE: 64,
+
+  /**
+   * Ceiling on the refusal MESSAGE that reaches the prompt.
+   *
+   * A refusal message is report content and this is the one piece of it an
+   * attacker can influence. MEASURED: the outer catch interpolates `error.name`,
+   * and an Error subclass may set that to anything, so a hostile message getter
+   * throwing `class X extends Error { name = "..." }` put 200,000 characters
+   * into ProviderResult.text, fifty times MAX_RENDERED_CHARS, invisible
+   * characters included.
+   *
+   * 512 is chosen against a measurement rather than picked: the longest message
+   * this package actually produces is 218 characters (NO_READABLE_ADDRESS), and
+   * the longest before this change was 179 (the address checksum refusal). So
+   * this is roughly 2.3x the real worst case, which leaves room for a longer
+   * message later and still bounds the attacker-influenced text hard. It is
+   * deliberately far below MAX_RENDERED_CHARS: the notice block beneath the head
+   * is the part invariant 10 forbids dropping, and the head is what must give
+   * way.
+   */
+  MAX_REFUSAL_MESSAGE_CHARS: 512,
 
   /**
    * Per-request network timeout. Deliberately far below the runtime's own

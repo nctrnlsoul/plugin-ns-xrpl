@@ -44,11 +44,16 @@
 // cancels the flag in silence.
 
 import type { IAgentRuntime, Memory, Provider, ProviderResult, State } from "@elizaos/core";
-import { ADDRESS_CANDIDATE_PATTERN, validateXrplAddress } from "./core/address.ts";
+import {
+  ADDRESS_CANDIDATE_PATTERN,
+  type HiddenAddressScan,
+  scanHiddenAddresses,
+  validateXrplAddress,
+} from "./core/address.ts";
 import { BOUNDS } from "./core/bounds.ts";
 import { XRPL_NODE_URL } from "./core/node-url.ts";
 import { checkRateLimit, pruneWindow } from "./core/ratelimit.ts";
-import { renderAccountReport, renderOtherAddressesNotice } from "./core/render.ts";
+import { type HiddenAddressNotice, renderAccountReport, renderRefusal } from "./core/render.ts";
 import {
   type AccountInfo,
   type TrustLine,
@@ -61,6 +66,7 @@ import {
   type CachedScalar,
   createTurnCache,
   readTurnCache,
+  skippedDigest,
   turnCacheKey,
   writeTurnCache,
 } from "./core/turncache.ts";
@@ -105,17 +111,47 @@ interface SpokenResult extends ProviderResult {
 /**
  * Turn a refusal into a ProviderResult the model will actually see.
  *
- * `otherAddresses` is how many further addresses the message held that this
+ * `otherAddresses` is the LIST of further addresses the message held that this
  * lookup never used. A refusal carries it for the same reason the report does:
  * "that address was refused" in a message naming three reads as an answer about
  * all three, and D6 is exactly that omission going unspoken.
+ *
+ * The LIST rather than a count, because F6 measured what a count alone buys. A
+ * refusal message is the only text the model gets when a lookup fails, so it is
+ * report content, and it is the content with no successful report beside it to
+ * contradict a guess.
+ *
+ * THE ROOM IS MEASURED, not assumed. This path applied no slice at all and was
+ * held inside MAX_RENDERED_CHARS by arithmetic over two constants and a test:
+ * worst case 1,229 of 4,000, and the smallest MAX_ECHOED_ADDRESSES that busts it
+ * is seventeen. The notice renderer is handed what is actually left after the
+ * refusal message, so raising a cap can cost names, which are counted, and can
+ * never cost the bound.
  */
-function speak(r: Refusal, otherAddresses: number, cache: CacheState): SpokenResult {
-  const others = renderOtherAddressesNotice(otherAddresses);
+function speak(
+  r: Refusal,
+  otherAddresses: readonly unknown[],
+  hidden: HiddenAddressScan,
+  cache: CacheState,
+): SpokenResult {
+  // Every rendering decision lives in src/core/render.ts, including the size
+  // bound and the printable-only property of the head. This file used to build
+  // the head by interpolation and apply no slice at all, which is how
+  // `error.name` from a hostile Error subclass put 200,000 characters and two
+  // invisible ones straight into ProviderResult.text. A decision made here is a
+  // decision the suite reaches only through the provider; made there, it is
+  // exported and can be handed the hostile input directly.
+  const notice: HiddenAddressNotice = { hidden: hidden.count, capped: hidden.capped };
   return {
-    text: `XRPL lookup refused. ${r.message}${others === "" ? "" : ` ${others}`}`,
+    text: renderRefusal(r.message, otherAddresses, notice),
     values: { xrplLookup: "refused", xrplRefusalCode: r.code },
-    data: { ok: false, code: r.code, xrplCache: cache },
+    data: {
+      ok: false,
+      code: r.code,
+      xrplCache: cache,
+      xrplHiddenAddresses: hidden.count,
+      xrplAddressChecksCapped: hidden.capped,
+    },
   };
 }
 
@@ -140,6 +176,52 @@ function silent(): SpokenResult {
 const BUDGET_SPENT = refuse(
   "NODE_TIMEOUT",
   "The XRPL lookup ran out of its time budget before it finished, so it was abandoned and no ledger data was retrieved.",
+);
+
+/**
+ * F8. The message named something address-shaped and NOTHING could be read.
+ *
+ * The message is deliberately free of anything taken FROM the message. The runs
+ * carry attacker-chosen invisible characters and never leave the scanner, so
+ * there is nothing here that could quote one.
+ */
+/**
+ * The scan result the outer catch reports, and the only one it can support.
+ *
+ * run() can throw before it has read the message at all, so this branch knows
+ * neither how many addresses were hidden nor whether the cap bit. Zero and
+ * false are the values that state nothing. Do not "fix" this into reporting a
+ * count nothing measured.
+ */
+const NOTHING_SCANNED: HiddenAddressScan = { count: 0, capped: false };
+
+/**
+ * The error's name, or a fixed string, and it CANNOT THROW.
+ *
+ * `name` is an ordinary property on an Error instance, so a subclass may define
+ * it as a getter, and a getter may throw. MEASURED against the version that
+ * read it inline: `class HostileName extends Error { get name() { throw ... } }`
+ * made provider.get REJECT from inside the catch that exists to stop exactly
+ * that, and on this runtime a rejected provider is erased entirely. The last
+ * line of defence was the line that failed.
+ *
+ * Nothing else in that branch can throw: refuse() trims a string literal, and
+ * renderRefusal defends its own inputs and takes only a string and two
+ * constants from here.
+ */
+function errorName(error: unknown): string {
+  try {
+    if (!(error instanceof Error)) return "unknown error";
+    const name: unknown = error.name;
+    return typeof name === "string" ? name : "unknown error";
+  } catch {
+    return "unknown error";
+  }
+}
+
+const NO_READABLE_ADDRESS = refuse(
+  "NO_READABLE_ADDRESS",
+  "No XRPL address could be read from that message. It held address-shaped characters interrupted by invisible or formatting characters, so nothing was looked up and no ledger data was retrieved. The counts below say what this plugin found.",
 );
 
 /**
@@ -259,10 +341,46 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
     // Find a candidate, then validate it properly. The pattern locates; it never
     // decides.
     const candidates = text.match(ADDRESS_CANDIDATE_PATTERN);
-    if (!candidates || candidates.length === 0) return silent();
 
-    const first = candidates[0];
-    if (first === undefined) return silent();
+    // F8. The SECOND scanner, and it exists because the first one is ASCII-only.
+    // One zero-width space inside an address makes the address invisible to
+    // ADDRESS_CANDIDATE_PATTERN, so the message named an entity that produced no
+    // candidate, no skipped entry, and therefore no line of any kind. MEASURED:
+    // a message holding only such a run returned silent(), text.length 0, and on
+    // this runtime that contributes zero characters to the prompt.
+    //
+    // A NUMBER, never the runs. They carry attacker-chosen invisible characters
+    // and nothing downstream can print what it was never given.
+    //
+    // The raw candidate list goes IN so the scan can exclude an account the
+    // ordinary path is already reporting. MEASURED without that exclusion:
+    // `compare <A> and <A carrying a zero-width space>` printed `address: A`
+    // with a real balance AND said an address hidden by invisible characters
+    // was never looked up and no balance may be stated for it. One report,
+    // both claims, one account.
+    const hidden = scanHiddenAddresses(text, candidates);
+
+    if ((!candidates || candidates.length === 0) && hidden.count === 0 && !hidden.capped) {
+      return silent();
+    }
+
+    const first = candidates?.[0];
+    // Nothing readable, but the message held at least one run this plugin could
+    // not read. A refusal, and it SPEAKS: no network call, no rate-limit charge,
+    // no cache. Nothing is charged until every check has passed.
+    //
+    // The lookup target is unchanged everywhere else on purpose. Refusing the
+    // whole turn whenever a poisoned run is present would let one pasted
+    // zero-width space silence every XRPL lookup at zero attacker cost, so the
+    // substitution hazard is closed by SPEECH rather than by blocking.
+    //
+    // The null clause is for the TYPE CHECKER and nothing else: at run time
+    // `first === undefined` already covers it, and it is written out rather
+    // than coerced away because `candidates ?? []` is the fallback shape rule 7
+    // bans and checks/failopen_lint.ts fails the build on.
+    if (candidates === null || first === undefined) {
+      return speak(NO_READABLE_ADDRESS, [], hidden, "not-cacheable");
+    }
 
     // D6, the one place X-006 recorded this package breaking its own rule. Only
     // the FIRST address is ever looked up and the rest were dropped in silence.
@@ -271,16 +389,41 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
     // second account: overstating an omission is the same class of inaccuracy
     // as hiding one, in a report whose only job is to be accurate.
     //
-    // NOT validated, because they were never looked at. "How many were skipped"
-    // is a smaller claim than "how many were real", and it is the claim this
-    // code can actually support.
-    const skipped = new Set(candidates.filter((c) => c !== first)).size;
+    // The LIST, not its size. What is safe to NAME is decided in one place, by
+    // src/core/render.ts, which runs the checksum: a candidate that fails it is
+    // counted and never quoted, because the base58 class spells English.
+    //
+    // Two things are still decided HERE, and each has one job left:
+    //
+    // `c !== first` is the REFUSAL path's only protection. On the report path
+    // the renderer removes the address it is reporting on by itself, but a
+    // refusal has no subject to hand it, so a message "BAD ... A ... BAD" would
+    // otherwise count and describe the very address the refusal is about.
+    //
+    // `new Set` is what makes the CACHE KEY canonical. The renderer de-duplicates
+    // for what it prints, so "A ... B ... B" and "A ... B" render identically;
+    // without the dedupe here their digests differ, the two turns land on
+    // different entries, and a cache that serves identical reports twice has
+    // quietly stopped working.
+    const skipped = [...new Set(candidates.filter((c) => c !== first))];
+
+    // F9. What a REFUSAL is handed, and it is deliberately NOT `skipped`.
+    //
+    // MEASURED on `compare A and B and C` with the node answering an error:
+    // B and C were each named with "no balance may be stated for it" and A,
+    // the account the user actually asked about, got no name, no line and no
+    // guard. That is F6's own lesson inverted and pointed at the one account
+    // that matters most. A refusal describes NOTHING, so there is no subject to
+    // exclude and every distinct candidate belongs in the list, A included.
+    // The renderer prints only what passes the checksum, so an unvalidated
+    // first candidate is still counted and never quoted.
+    const allNamed = [...new Set(candidates)];
 
     const address = validateXrplAddress(first);
     // Not cached, and the cache is not even consulted yet. Nothing read the
     // ledger, so there is nothing a later call could legitimately replay, and an
     // unvalidated string is not a partition this code is willing to key on.
-    if (!address.ok) return speak(address, skipped, "not-cacheable");
+    if (!address.ok) return speak(address, allNamed, hidden, "not-cacheable");
 
     // ONE ATOMIC STEP, from here to the stamps update below. Nothing in it may
     // suspend. The limiter's read-then-write is only safe because no call can
@@ -291,7 +434,12 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
       agentId: runtime?.agentId,
       messageId: message?.id,
       address: address.value,
-      skipped,
+      // The DIGEST of the same array the names are rendered from. ONE source: a
+      // count beside it is a second number that can disagree, and disagreeing is
+      // exactly what it did. Under the count form, one message.id with turn 1
+      // saying "A and B" and turn 2 saying "A and C" was ONE key, so turn 2 was
+      // served a report NAMING B while C went unmentioned.
+      skipped: skippedDigest(skipped, hidden.count),
       now,
     });
     const cacheState: CacheState = key === null ? "not-cacheable" : "miss";
@@ -312,7 +460,7 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
     // been reached", so replaying it after the window reopened would be a false
     // statement in report content, and a refusal message is the only text the
     // model gets when a lookup fails.
-    if (!limit.ok) return speak(limit, skipped, cacheState);
+    if (!limit.ok) return speak(limit, allNamed, hidden, cacheState);
     stamps = pruneWindow([...stamps, now], now);
     // END OF THE ATOMIC STEP.
 
@@ -357,14 +505,14 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
       { account: address.value, ledger_index: "validated" },
       { fetchImpl: deps.fetchImpl, nodeUrl: deps.nodeUrl, timeoutMs: budget.next() },
     );
-    if (!rawInfo.ok) return remember(speak(rawInfo, skipped, cacheState));
+    if (!rawInfo.ok) return remember(speak(rawInfo, allNamed, hidden, cacheState));
 
     const info = validateAccountInfoResponse(rawInfo.value, address.value);
-    if (!info.ok) return remember(speak(info, skipped, cacheState));
+    if (!info.ok) return remember(speak(info, allNamed, hidden, cacheState));
 
     const linesResult = await fetchLines(address.value, budget);
     if ("ok" in linesResult && linesResult.ok === false) {
-      return remember(speak(linesResult, skipped, cacheState));
+      return remember(speak(linesResult, allNamed, hidden, cacheState));
     }
     const { lines, moreAvailable, droppedLines, ledgerIndex, ledgerIndexVaried } =
       linesResult as LinesResult;
@@ -383,14 +531,23 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
         droppedLines,
         linesLedgerIndex: ledgerIndex,
         linesLedgerVaried: ledgerIndexVaried,
-        otherAddressesNotLookedUp: skipped,
+        otherAddressCandidates: skipped,
+        hiddenAddresses: hidden.count,
+        addressChecksCapped: hidden.capped,
       }),
       values: {
         xrplLookup: "ok",
         xrplAddress: account.address,
         xrplBalanceDrops: account.balanceDrops,
       },
-      data: { ok: true, attempted: true, ledgerIndex: account.ledgerIndex, xrplCache: cacheState },
+      data: {
+        ok: true,
+        attempted: true,
+        ledgerIndex: account.ledgerIndex,
+        xrplCache: cacheState,
+        xrplHiddenAddresses: hidden.count,
+        xrplAddressChecksCapped: hidden.capped,
+      },
     });
   }
 
@@ -431,10 +588,17 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
         // The last line of defence. Anything escaping above would otherwise be
         // swallowed by the runtime and become silence.
         //
-        // Zero further addresses, because nothing here knows: run() can throw
+        // NO further addresses, because nothing here knows: run() can throw
         // before it has read the message at all, and one of the tests below
         // makes content.text itself throw. Saying nothing about other addresses
-        // is the only claim this branch can support.
+        // is the only claim this branch can support, and an empty list renders
+        // exactly as the old zero did, which is nothing.
+        //
+        // ZERO unreadable runs, for exactly that reason and not for a different
+        // one. This branch may never have seen the message text, so it cannot
+        // say a run was there and cannot say one was not. Zero is the value that
+        // states nothing, which is the only claim available. Do not "fix" this
+        // into reporting a count nothing measured.
         //
         // The cache is neither read nor written here for the same reason. This
         // branch does not know the message, the address or the skipped count, so
@@ -442,11 +606,12 @@ export function createXrplProvider(overrides: Partial<XrplProviderDeps> = {}): P
         return speak(
           refuse(
             "INTERNAL_ERROR",
-            `The XRPL lookup failed unexpectedly and no ledger data was retrieved (${
-              error instanceof Error ? error.name : "unknown error"
-            }).`,
+            `The XRPL lookup failed unexpectedly and no ledger data was retrieved (${errorName(
+              error,
+            )}).`,
           ),
-          0,
+          [],
+          NOTHING_SCANNED,
           "not-cacheable",
         );
       }

@@ -206,10 +206,18 @@ The plugin cannot detect which of those you are doing, and it does not warn.
   stated as `trust_lines_size_capped`. `trust_lines_shown` always equals the
   number of rows actually printed.
 - One message gets one lookup. If it names several addresses, the first is
-  looked up and the rest are neither validated nor retrieved. That is stated as
-  `other_addresses_not_looked_up`, with a count, on a successful report and on a
-  refusal alike, so a report about one account never reads as an answer about
-  all of them.
+  looked up and no ledger data is retrieved for any of the rest. That is stated
+  as `other_addresses_not_looked_up`, counting the DISTINCT further addresses and
+  never the account the report itself describes, on a successful report and on a
+  refusal alike, so a report about one account never reads as an answer about all
+  of them. Up to three of the skipped addresses are also NAMED, one per
+  `other_address_not_retrieved[n]` line, because a count alone still let a small
+  model invent a balance for the account nothing had named. Only addresses that
+  pass the checksum are named; the rest are counted as
+  `other_addresses_not_valid` and never quoted. What is held back is counted
+  under the reason it was actually held back for: `other_addresses_not_named_cap`
+  for the per-report limit on how many are named, and
+  `other_addresses_not_named_for_room` for anything the size bound dropped.
 - The pinned node is a public endpoint operated by a third party. If it is
   withdrawn or degraded, lookups refuse.
 

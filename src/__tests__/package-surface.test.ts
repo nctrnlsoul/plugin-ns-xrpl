@@ -180,6 +180,7 @@ describe("the public entry point re-exports the pure core it claims to", () => {
       "createTurnCache",
       "isUuidLike",
       "readTurnCache",
+      "skippedDigest",
       "turnCacheKey",
       "writeTurnCache",
     ];
@@ -191,6 +192,30 @@ describe("the public entry point re-exports the pure core it claims to", () => {
       expect(direct[name], `setup: ${name} must exist in the module`).toBeDefined();
       // Identity, not merely presence. A re-export that resolved to some other
       // binding would satisfy toHaveProperty and be a different function.
+      expect(index[name], `${name} must be the module's own binding`).toBe(direct[name]);
+    }
+  });
+
+  it("exports the ADDRESS module, scanner included, and the SAME bindings", async () => {
+    // Same class of hole, one module over. countUnreadableAddressRuns is the
+    // second scanner a consumer needs to reproduce what this provider decides:
+    // without it, a consumer auditing why a message produced no lookup cannot
+    // tell an ordinary message from one carrying an unreadable run.
+    const index = (await import("../index.ts")) as unknown as Record<string, unknown>;
+    const direct = (await import("../core/address.ts")) as unknown as Record<string, unknown>;
+
+    const names = [
+      "ADDRESS_CANDIDATE_PATTERN",
+      "countUnreadableAddressRuns",
+      "isValidXrplAddress",
+      "validateXrplAddress",
+    ];
+    // Rule 95: a loop over an empty list passes vacuously.
+    expect(names.length).toBeGreaterThan(0);
+
+    for (const name of names) {
+      expect(index, `src/index.ts must export ${name}`).toHaveProperty(name);
+      expect(direct[name], `setup: ${name} must exist in the module`).toBeDefined();
       expect(index[name], `${name} must be the module's own binding`).toBe(direct[name]);
     }
   });

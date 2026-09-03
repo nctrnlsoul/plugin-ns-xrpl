@@ -21,6 +21,7 @@ import {
   createTurnCache,
   isUuidLike,
   readTurnCache,
+  skippedDigest,
   TURN_CACHE_KEY_SEPARATOR,
   turnCacheKey,
   writeTurnCache,
@@ -29,8 +30,13 @@ import {
 const AGENT = "11111111-2222-4333-8444-555555555555";
 const MESSAGE = "66666666-7777-4888-8999-aaaaaaaaaaaa";
 const ADDR = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
+const PEER = "rKUK9omZqVEnraCipKNFb5q4tuNTeqEDZS";
+const THIRD = "rNjV3CeZ8puSpeiZqDmjAvfwxufLsiYRRX";
 
-const GOOD = { agentId: AGENT, messageId: MESSAGE, address: ADDR, skipped: 0, now: 1_000 };
+/** The digest a turn that skipped nothing and read every run carries. */
+const NO_SKIPPED = String(skippedDigest([], 0));
+
+const GOOD = { agentId: AGENT, messageId: MESSAGE, address: ADDR, skipped: NO_SKIPPED, now: 1_000 };
 
 function result(text: string): CachedResult {
   return { text, values: { xrplLookup: "ok" }, data: { ok: true, xrplCache: "miss" } };
@@ -94,18 +100,166 @@ describe("the UUID shape is checked, not assumed", () => {
   });
 });
 
+// The key used to carry the skipped COUNT, and the report it serves stopped
+// being determined by a count the moment the notice started NAMING addresses.
+//
+// REPRODUCED against the count form: one agentId, one message.id, turn 1 saying
+// "A and B" and turn 2 saying "A and C", two distinct valid addresses and a
+// skipped count of 1 either side, inside the TTL. Turn 2 reported cacheState
+// "hit" and served turn 1's report, which names B. B was never in turn 2's
+// message and C vanished with no notice, while every count in the report still
+// added up. Memory.id is caller-shaped input, which is why isUuidLike exists, so
+// that collision is reachable rather than hypothetical.
+//
+// The key component is therefore a DIGEST of the list. Identities and count are
+// one value and cannot disagree.
+describe("the skipped digest is determined by what the report is determined by", () => {
+  it("digests a list of strings to a fixed lowercase hex shape", () => {
+    const d = skippedDigest([PEER], 0);
+    expect(d, "a list of strings must produce a digest").not.toBeNull();
+    expect(d).toMatch(/^[0-9a-f]{64}$/);
+    expect(NO_SKIPPED, "and so must the empty list").toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("is stable: the same list twice is the same digest", () => {
+    expect(skippedDigest([PEER, THIRD], 0)).toBe(skippedDigest([PEER, THIRD], 0));
+  });
+
+  it("THRESHOLD: two lists of the SAME LENGTH with DIFFERENT MEMBERS differ", () => {
+    // The property the count form did not have, and the only one that matters:
+    // one member changed, the length unchanged. A count agrees on both of these
+    // and the report does not.
+    expect(skippedDigest([PEER], 0)).not.toBe(skippedDigest([THIRD], 0));
+    expect(skippedDigest([ADDR, PEER], 0)).not.toBe(skippedDigest([ADDR, THIRD], 0));
+  });
+
+  it("carries the ORDER, because the report names them in order", () => {
+    expect(skippedDigest([PEER, THIRD], 0)).not.toBe(skippedDigest([THIRD, PEER], 0));
+  });
+
+  it("carries the LENGTH too, so a shorter list is a different digest", () => {
+    expect(skippedDigest([PEER], 0)).not.toBe(skippedDigest([PEER, THIRD], 0));
+  });
+
+  it("cannot be forged by concatenation: no two distinct lists share a digest", () => {
+    // Without a separator, ["ab","c"] and ["a","bc"] concatenate to one string
+    // and one digest, so two different messages would read each other's report.
+    expect(skippedDigest(["ab", "c"], 0)).not.toBe(skippedDigest(["a", "bc"], 0));
+    expect(skippedDigest(["a", "", "b"], 0)).not.toBe(skippedDigest(["a", "b"], 0));
+  });
+
+  it("REFUSES anything that is not a list, so nothing is claimed about it", () => {
+    for (const bad of [undefined, null, 0, 1, "1", {}, true, new Set([PEER])]) {
+      expect(skippedDigest(bad, 0), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it("REFUSES a list holding anything that is not a string", () => {
+    // A non-string entry cannot be rendered and cannot be compared as one, so
+    // digesting it would key on a coercion. Null is the safe direction: no key
+    // means the real work runs twice, which is the behaviour the cache removes.
+    for (const bad of [
+      [1],
+      [PEER, 2],
+      [null],
+      [undefined],
+      [{}],
+      [[PEER]],
+      [PEER, Symbol.iterator],
+    ]) {
+      expect(skippedDigest(bad, 0), JSON.stringify(bad.map(String))).toBeNull();
+    }
+  });
+
+  // F8, one layer out from F7 and the SAME defect. The report is determined by
+  // the skipped identities AND by how many runs the message held that this
+  // plugin could not read, because both are printed. A digest carrying only the
+  // identities makes two turns that differ by the unreadable count share one
+  // entry, and the second is served a report stating a number its own message
+  // never produced, with every count in it still adding up.
+  //
+  // MEASURED against the identities-only form: same agentId, same message.id,
+  // same subject, same skipped list, one poisoned run in turn 1 and two in turn
+  // 2. Turn 2 reported "hit" and was served turn 1's report, so the second run
+  // vanished exactly as it did before this change existed.
+  it("THRESHOLD: the same list with DIFFERENT unreadable counts is a different digest", () => {
+    // One, not a comfortable large number. The smallest disagreement that must
+    // split the key is zero runs against one.
+    expect(skippedDigest([], 0)).not.toBe(skippedDigest([], 1));
+    expect(skippedDigest([PEER], 1)).not.toBe(skippedDigest([PEER], 2));
+    expect(skippedDigest([PEER, THIRD], 0)).not.toBe(skippedDigest([PEER, THIRD], 1));
+  });
+
+  it("is ONE component, so the identities and the count cannot disagree", () => {
+    // The rule F7 earned, applied to the second thing the report is determined
+    // by: A KEY MUST BE DETERMINED BY WHAT THE THING IT KEYS IS DETERMINED BY.
+    // Two components would be two values that can drift apart, which is the
+    // shape this repo keeps finding.
+    const seen = new Set<string | null>();
+    for (const list of [[], [PEER], [THIRD], [PEER, THIRD]]) {
+      for (const runs of [0, 1, 2]) {
+        seen.add(skippedDigest(list, runs));
+      }
+    }
+    expect(seen.size, "every (list, count) pair is its own digest").toBe(12);
+  });
+
+  it("the count cannot be confused with a member of the list", () => {
+    // The separator's job, extended to the new component. Without it a count of
+    // 1 beside no addresses and no count beside the address "1" would collide.
+    expect(skippedDigest(["1"], 0)).not.toBe(skippedDigest([], 1));
+    expect(skippedDigest([], 10)).not.toBe(skippedDigest(["0"], 1));
+  });
+
+  it("is stable: the same list and the same count twice is the same digest", () => {
+    expect(skippedDigest([PEER], 3)).toBe(skippedDigest([PEER], 3));
+  });
+
+  it("REFUSES a count that is not a non-negative safe integer, so nothing is keyed on it", () => {
+    // Null is the safe direction here for the same reason it is above: no key
+    // means the real work runs twice, which is the behaviour this module
+    // removes rather than one it breaks. A negative or fractional count is a
+    // number nothing in this package can have measured.
+    for (const bad of [
+      undefined,
+      null,
+      -1,
+      -0.5,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+      "1",
+      "",
+      {},
+      [],
+      true,
+    ]) {
+      expect(skippedDigest([PEER], bad), JSON.stringify(bad)).toBeNull();
+    }
+    // Rule 95: prove the setup. The same list WITH a usable count digests, so
+    // the nulls above came from the component under test.
+    expect(skippedDigest([PEER], 0)).not.toBeNull();
+    expect(skippedDigest([PEER], Number.MAX_SAFE_INTEGER)).not.toBeNull();
+  });
+});
+
 describe("the key admits only what it can safely partition on", () => {
   it("builds a key from a complete, well-formed input", () => {
-    expect(turnCacheKey(GOOD)).toBe([AGENT, MESSAGE, ADDR, "0"].join(TURN_CACHE_KEY_SEPARATOR));
+    expect(turnCacheKey(GOOD)).toBe(
+      [AGENT, MESSAGE, ADDR, NO_SKIPPED].join(TURN_CACHE_KEY_SEPARATOR),
+    );
   });
 
   it("separates components with a byte none of them can contain", () => {
     // Not decoration. Without a separator no component can forge, two different
     // (agent, message) pairs can concatenate to one string. NUL cannot appear in
-    // a UUID, in Ripple base58, or in a decimal integer.
+    // a UUID, in Ripple base58, or in lowercase hex.
     expect(TURN_CACHE_KEY_SEPARATOR).toBe(String.fromCharCode(0));
     expect(AGENT.includes(TURN_CACHE_KEY_SEPARATOR)).toBe(false);
     expect(ADDR.includes(TURN_CACHE_KEY_SEPARATOR)).toBe(false);
+    expect(NO_SKIPPED.includes(TURN_CACHE_KEY_SEPARATOR)).toBe(false);
   });
 
   it("REFUSES a missing message id rather than keying on the string undefined", () => {
@@ -130,10 +284,31 @@ describe("the key admits only what it can safely partition on", () => {
     expect(turnCacheKey({ ...GOOD, address: "" })).toBeNull();
   });
 
-  it("REFUSES a skipped count that is not a whole number at or above zero", () => {
-    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "1", undefined]) {
-      expect(turnCacheKey({ ...GOOD, skipped: bad }), String(bad)).toBeNull();
+  it("REFUSES a skipped component that is not the exact digest shape", () => {
+    // The digest is the only shape this key will partition on. A count, a raw
+    // list, an absent value and a near-miss hex string are all refused, and each
+    // is refused by the SHAPE test rather than by some other branch: the rest of
+    // GOOD is well formed, so nothing else here can return null.
+    for (const bad of [
+      0,
+      1,
+      "0",
+      "1",
+      undefined,
+      null,
+      [],
+      [PEER],
+      "",
+      NO_SKIPPED.slice(0, -1),
+      `${NO_SKIPPED}0`,
+      NO_SKIPPED.toUpperCase(),
+      `${NO_SKIPPED.slice(0, -1)}g`,
+    ]) {
+      expect(turnCacheKey({ ...GOOD, skipped: bad }), JSON.stringify(bad)).toBeNull();
     }
+    // Rule 95: prove the setup. The same input WITH the digest builds a key, so
+    // the nulls above came from the component under test.
+    expect(turnCacheKey(GOOD)).not.toBeNull();
   });
 
   it("REFUSES a non-finite clock, so a corrupt clock cannot partition anything", () => {
@@ -161,11 +336,35 @@ describe("the key admits only what it can safely partition on", () => {
     );
   });
 
-  it("THRESHOLD: carries the skipped count, and one is enough to change the key", () => {
-    // The report text differs by exactly the other_addresses_not_looked_up line
-    // when this count differs, and rule 10 says that omission is always spoken.
-    // A key that drops it serves a report missing the notice.
-    expect(turnCacheKey({ ...GOOD, skipped: 1 })).not.toBe(turnCacheKey({ ...GOOD, skipped: 0 }));
+  it("THRESHOLD: two skipped lists of the SAME LENGTH with DIFFERENT MEMBERS are different keys", () => {
+    // The property the count form did not have. Under it, "A and B" and "A and
+    // C" in one turn were one key, so the second turn was served a report NAMING
+    // B, an address its message never held, while C vanished with no notice and
+    // every count still added up.
+    const withB = turnCacheKey({ ...GOOD, skipped: String(skippedDigest([PEER], 0)) });
+    const withC = turnCacheKey({ ...GOOD, skipped: String(skippedDigest([THIRD], 0)) });
+    expect(withB, "setup: both must actually build a key").not.toBeNull();
+    expect(withC).not.toBeNull();
+    expect(withB).not.toBe(withC);
+  });
+
+  it("carries the skipped list at a threshold of ONE, so the notice cannot be lost", () => {
+    // The report text differs by exactly the other-address lines when this
+    // differs, and rule 10 says that omission is always spoken. A key that drops
+    // it serves a report missing the notice.
+    expect(turnCacheKey({ ...GOOD, skipped: String(skippedDigest([PEER], 0)) })).not.toBe(
+      turnCacheKey(GOOD),
+    );
+  });
+
+  it("carries the unreadable-run count at a threshold of ONE, so that notice cannot be lost", () => {
+    // The same property one field over. The two reports differ by exactly the
+    // unreadable_address_runs line, and invariant 10 says that omission is
+    // always spoken, so a key that cannot tell them apart serves a report
+    // missing it.
+    expect(turnCacheKey({ ...GOOD, skipped: String(skippedDigest([], 1)) })).not.toBe(
+      turnCacheKey(GOOD),
+    );
   });
 
   it("is stable: the same input twice is the same key", () => {

@@ -2,7 +2,10 @@
 // standing up an agent runtime.
 export {
   ADDRESS_CANDIDATE_PATTERN,
+  countUnreadableAddressRuns,
+  type HiddenAddressScan,
   isValidXrplAddress,
+  scanHiddenAddresses,
   validateXrplAddress,
 } from "./core/address.ts";
 export { BOUNDS, type Bounds } from "./core/bounds.ts";
@@ -10,8 +13,12 @@ export { ALLOWED_NODE_HOSTS, assertAllowedNodeUrl, XRPL_NODE_URL } from "./core/
 export { checkRateLimit, pruneWindow } from "./core/ratelimit.ts";
 export {
   type AccountReportInput,
+  type HiddenAddressNotice,
   renderAccountReport,
   renderCurrencyCode,
+  renderOtherAddressesNotice,
+  renderRefusal,
+  renderRefusalHead,
   sanitizeLedgerText,
 } from "./core/render.ts";
 export {
@@ -35,6 +42,7 @@ export {
   createTurnCache,
   isUuidLike,
   readTurnCache,
+  skippedDigest,
   TURN_CACHE_KEY_SEPARATOR,
   type TurnCache,
   type TurnCacheEntry,

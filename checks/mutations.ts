@@ -134,8 +134,15 @@ const MUTATIONS: Mutation[] = [
   {
     id: "render-cap-removed",
     file: "src/core/render.ts",
-    find: "  if (report.length <= BOUNDS.MAX_RENDERED_CHARS) return report;",
-    replace: "  if (true) return report;",
+    // Search text updated when F6 gave the size search a SECOND stage, which
+    // gives up other-address names after it has given up trust rows. The old
+    // one-line anchor then matched both loops and the harness called it STALE,
+    // which is the fifth time that mechanism has caught its own drift.
+    find:
+      "    const report = build(kept, BOUNDS.MAX_ECHOED_ADDRESSES);\n" +
+      "    if (report.length <= BOUNDS.MAX_RENDERED_CHARS) return report;",
+    replace:
+      "    const report = build(kept, BOUNDS.MAX_ECHOED_ADDRESSES);\n    if (true) return report;",
     why: "finding H-2: without a total cap the whole report lands in the context unbounded",
   },
   {
@@ -296,8 +303,11 @@ const MUTATIONS: Mutation[] = [
     // when the header alone overruns the cap, so there are no rows left to drop.
     // A hard cut still has to be spoken, and src/__tests__/render-redproof.ts
     // pins the marker on exactly that path.
-    find: "  return build(0).slice(0, BOUNDS.MAX_RENDERED_CHARS - marker.length) + marker;",
-    replace: "  return build(0).slice(0, BOUNDS.MAX_RENDERED_CHARS);",
+    // Search text updated again when F6 gave build() a second parameter. The
+    // hard cut runs over build(0, 0), zero names, so a character cut can never
+    // end mid-address.
+    find: "  return build(0, 0).slice(0, BOUNDS.MAX_RENDERED_CHARS - marker.length) + marker;",
+    replace: "  return build(0, 0).slice(0, BOUNDS.MAX_RENDERED_CHARS);",
     why: "the only cap test asserted length alone, so silently cutting the report satisfied it exactly",
   },
   {
@@ -351,7 +361,6 @@ const MUTATIONS: Mutation[] = [
     // second argument, then when the in-turn cache put this branch through
     // remember(), and again when remember() moved into run() and stopped
     // taking the key and the clock as arguments.
-    find: '    if ("ok" in linesResult && linesResult.ok === false) {\n      return remember(speak(linesResult, skipped, cacheState));\n    }',
     // The REPLACE has to move with the FIND, and once it did not. `SILENT`
     // stopped existing when the shared singleton became a silent() factory, so
     // this entry no longer silenced the branch: it produced code that does not
@@ -363,6 +372,10 @@ const MUTATIONS: Mutation[] = [
     // A mutation whose replace does not compile tests the compiler. Staleness is
     // a hard failure here for the find and is invisible for the replace, so the
     // replace is the half that has to be re-read by hand.
+    //
+    // Search text updated a fourth time when F8 gave speak() its unreadable-run
+    // count. The harness caught the drift itself, as it has every time.
+    find: '    if ("ok" in linesResult && linesResult.ok === false) {\n      return remember(speak(linesResult, allNamed, hidden, cacheState));\n    }',
     replace: '    if ("ok" in linesResult && linesResult.ok === false) return silent();',
     why: "THE headline hole: the whole second half of the lookup could fail and the provider contributed nothing",
   },
@@ -560,10 +573,16 @@ const MUTATIONS: Mutation[] = [
   },
   {
     id: "f2-refusal-prefix-changed",
-    file: "src/provider.ts",
-    // Search text updated when D6 appended the other-addresses notice here.
-    find: '    text: `XRPL lookup refused. ${r.message}${others === "" ? "" : ` ${others}`}`,',
-    replace: '    text: `Lookup refused. ${r.message}${others === "" ? "" : ` ${others}`}`,',
+    file: "src/core/render.ts",
+    // Search text updated four times: when D6 appended the other-addresses
+    // notice here, when F6 made that notice a list of lines behind `tail`, when
+    // F7 lifted the prefix into `head` so the notice could be given the room
+    // actually left after it, and when F9 MOVED the whole refusal renderer out
+    // of src/provider.ts. It moved because the head was the one piece of report
+    // content with no bound and no sanitiser, and a decision made inside the
+    // provider is a decision the suite can only reach through the provider.
+    find: 'const REFUSAL_PREFIX = "XRPL lookup refused. ";',
+    replace: 'const REFUSAL_PREFIX = "Lookup refused. ";',
     why: 'runtime-integration asserted toContain("XRPL") on the prompt, and the test character is named "XRPL Test Agent", so it passed on the name',
   },
 
@@ -589,38 +608,56 @@ const MUTATIONS: Mutation[] = [
 
   {
     id: "d6-other-addresses-uncounted",
+    // Search text updated when F6 turned `skipped` from a COUNT into the LIST,
+    // so the notice could name the addresses instead of only counting them.
+    find: "    const skipped = [...new Set(candidates.filter((c) => c !== first))];",
     file: "src/provider.ts",
-    find: "    const skipped = new Set(candidates.filter((c) => c !== first)).size;",
-    replace: "    const skipped = 0;",
+    replace: "    const skipped: string[] = [];",
     why: "the original defect: a message naming five accounts produced a report about one and nothing said the other four existed",
   },
   {
     id: "d6-other-addresses-counted-with-duplicates",
     file: "src/provider.ts",
-    find: "    const skipped = new Set(candidates.filter((c) => c !== first)).size;",
-    replace: "    const skipped = candidates.length - 1;",
-    why: "the same address written twice was reported as a further account that was not looked up, and overstating an omission is the same inaccuracy as hiding one",
+    find: "    const skipped = [...new Set(candidates.filter((c) => c !== first))];",
+    // `slice(1)` rather than the old `candidates.length - 1`. The REPORT path
+    // survives this now, because F7 made the renderer remove the address it is
+    // reporting on by itself, and the entry moved with that: what it tests is
+    // the REFUSAL path, which is the half the renderer cannot do because a
+    // refusal has no subject to hand it.
+    replace: "    const skipped = candidates.slice(1);",
+    why: 'a refusal about BAD in the message "BAD ... A ... BAD" counts and describes the very address it is refusing as one it did not look up. The renderer removes the subject on the report path and has no subject to remove on this one, so `c !== first` is this path\'s only protection',
   },
   {
     id: "d6-threshold-off-by-one",
     file: "src/core/render.ts",
-    find: '  if (n === 0) return "";',
-    replace: '  if (n <= 1) return "";',
+    // Search text updated when F6 replaced the count parameter with the list and
+    // the single returned string with an array of lines, and again when F8 made
+    // the early return ask about the unreadable-run count too, because a message
+    // can hold a run and no further candidate at all.
+    find: "  if ((p === null || p.total === 0) && hidden === 0 && !capped) return [];",
+    replace: "  if ((p === null || p.total <= 1) && hidden === 0 && !capped) return [];",
     why: "X-006 puts the threshold at ONE: dropping exactly one address is the smallest case that must be reported, and it is the case a comfortable fixture never covers",
   },
   {
     id: "d6-count-dropped-from-the-notice",
     file: "src/core/render.ts",
-    find: "  return `other_addresses_not_looked_up: ${n}. The message held further text shaped like an XRPL address. Only the FIRST address was looked up; the rest were neither validated nor retrieved, so nothing in this report describes them.`;",
+    // Search text updated when F7 made the count a count of DISTINCT candidates
+    // that are not the subject of the report, and said so in the sentence beside
+    // it so the number and the words agree.
+    find: "      ? `  other_addresses_not_looked_up: ${p.total}. The message held that many further DISTINCT strings shaped like an XRPL address, not counting the one this report is about. Only the FIRST address was looked up; no ledger data was retrieved for any of the rest, so nothing in this report describes them.`",
     replace:
-      "  return `other_addresses_not_looked_up: some. The message held further text shaped like an XRPL address. Only the FIRST address was looked up; the rest were neither validated nor retrieved, so nothing in this report describes them.`;",
+      "      ? `  other_addresses_not_looked_up: some. The message held that many further DISTINCT strings shaped like an XRPL address, not counting the one this report is about. Only the FIRST address was looked up; no ledger data was retrieved for any of the rest, so nothing in this report describes them.`",
     why: "F2's shape applied to the new notice: a count asserted against the whole report is satisfied by any stray digit in the fixture",
   },
   {
     id: "d6-refusal-drops-the-notice",
-    file: "src/provider.ts",
-    find: '    text: `XRPL lookup refused. ${r.message}${others === "" ? "" : ` ${others}`}`,',
-    replace: "    text: `XRPL lookup refused. ${r.message}`,",
+    file: "src/core/render.ts",
+    // Search text updated when F6 gave speak() a multi-line tail, because the
+    // notice stopped being one string and became a list of lines, again when
+    // F7 lifted the prefix into `head`, and again when F9 moved the whole
+    // refusal renderer into src/core/render.ts.
+    find: "  const text = `${head}${tail}`;",
+    replace: "  const text = head;",
     why: "a refusal about the FIRST address, in a message naming several, reads as an answer about all of them unless the rest are counted out loud",
   },
 
@@ -751,16 +788,20 @@ const MUTATIONS: Mutation[] = [
   {
     id: "f1-outer-catch-error-name-unread",
     file: "src/provider.ts",
-    find: 'error instanceof Error ? error.name : "unknown error"',
-    replace: 'error instanceof Error ? "ZZQQXX" : "unknown error"',
+    find: '    const name: unknown = error.name;\n    return typeof name === "string" ? name : "unknown error";',
+    replace: '    void error;\n    return "ZZQQXX";',
     why: "invariant 1's last line of defence had a test proving it SPEAKS and none reading what it said",
   },
   {
     id: "f2-duplicate-later-address-counted-twice",
     file: "src/provider.ts",
-    find: "    const skipped = new Set(candidates.filter((c) => c !== first)).size;",
-    replace: "    const skipped = candidates.filter((c) => c !== first).length;",
-    why: "finer than d6-other-addresses-counted-with-duplicates, which the [A, A] test catches because both forms give 0 there. [A, B, B] gives 1 shipped and 2 here, and overstating an omission is the same inaccuracy as hiding one",
+    // Search text updated when F6 turned `skipped` into the LIST. The mutation
+    // is the same one: the dedupe removed, the filter kept. What it tests moved
+    // in F7, because the renderer now de-duplicates what it PRINTS: the dedupe
+    // here is what keeps the CACHE KEY canonical.
+    find: "    const skipped = [...new Set(candidates.filter((c) => c !== first))];",
+    replace: "    const skipped = candidates.filter((c) => c !== first);",
+    why: '"A and B" and "A and B and B" render to the identical report, so they must share one cache entry. Without the dedupe their digests differ, the two land on different keys, and the cache stops serving a turn whose answer it is already holding',
   },
 
   // -------------------------------------------------------------------------
@@ -1153,16 +1194,59 @@ const MUTATIONS: Mutation[] = [
   {
     id: "cache-key-drops-agent-id",
     file: "src/core/turncache.ts",
-    find: "  return [input.agentId, input.messageId, input.address, String(skipped)].join(",
-    replace: "  return [input.messageId, input.address, String(skipped)].join(",
+    // Search text updated when F7 replaced the stringified skipped COUNT with
+    // the digest of the skipped LIST, which is already a string.
+    find: "  return [input.agentId, input.messageId, input.address, skipped].join(TURN_CACHE_KEY_SEPARATOR);",
+    replace: "  return [input.messageId, input.address, skipped].join(TURN_CACHE_KEY_SEPARATOR);",
     why: "the provider is a module-level singleton, so one cache serves every agent in the process, and without the agent id one agent reads another agent's lookup",
   },
   {
-    id: "cache-key-drops-skipped-count",
+    id: "cache-key-drops-the-skipped-digest",
     file: "src/core/turncache.ts",
-    find: "  return [input.agentId, input.messageId, input.address, String(skipped)].join(",
-    replace: "  return [input.agentId, input.messageId, input.address].join(",
-    why: "invariant 10 through the cache: two reports differ by exactly the other_addresses_not_looked_up line, so a key without the count serves a shortened report that reads as a complete one",
+    // Renamed from cache-key-drops-skipped-count when the component stopped
+    // being a count. The defect is the same one and it got larger: the report
+    // now NAMES the skipped addresses, so a key that carries nothing about them
+    // serves a report naming an account the second message never held.
+    find: "  return [input.agentId, input.messageId, input.address, skipped].join(TURN_CACHE_KEY_SEPARATOR);",
+    replace:
+      "  return [input.agentId, input.messageId, input.address].join(TURN_CACHE_KEY_SEPARATOR);",
+    why: "invariant 10 through the cache: two reports differ by exactly the other-address lines, so a key without them serves a shortened report that reads as a complete one, and one that NAMES an address the message never held",
+  },
+  {
+    id: "skipped-digest-ignores-the-identities",
+    file: "src/core/turncache.ts",
+    // Search text updated when F8 hashed the unreadable-run count into the same
+    // component. The mutation is unchanged: the identities erased, everything
+    // else kept.
+    find:
+      "      `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}" +
+      "${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,",
+    replace:
+      "      `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}${String(candidates.length)}`,",
+    why: "the count form wearing the digest's clothes: same shape, same length, and two same-length lists with different members still collide, which is the exact collision that served one turn's address names to another turn",
+  },
+  {
+    id: "skipped-digest-drops-the-separator",
+    file: "src/core/turncache.ts",
+    find:
+      "      `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}" +
+      "${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,",
+    replace: '      `${String(unreadable)}${candidates.join("")}`,',
+    why: 'without a separator ["ab","c"] and ["a","bc"] concatenate to one string and one digest, so two different messages read each other\'s report. NUL cannot occur in Ripple base58, which is what makes the boundary unforgeable',
+  },
+  {
+    id: "skipped-digest-admits-a-non-string-entry",
+    file: "src/core/turncache.ts",
+    find: '    if (typeof c !== "string") return null;',
+    replace: '    if (typeof c !== "string") continue;',
+    why: "a non-string entry cannot be rendered and cannot be compared as one, so digesting it keys on a coercion. Null is the safe direction: no key means the real work runs twice, which is the behaviour this module removes rather than one it breaks",
+  },
+  {
+    id: "cache-key-admits-any-skipped-shape",
+    file: "src/core/turncache.ts",
+    find: '  if (typeof skipped !== "string" || !SKIPPED_DIGEST_PATTERN.test(skipped)) return null;',
+    replace: '  if (typeof skipped !== "string") return null;',
+    why: "the shape test is what refuses a component that is not a digest at all. Without it any string partitions the cache, so a caller handing over a count, an empty string or a truncated digest gets a key that means something other than what it says",
   },
   {
     id: "cache-admits-missing-message-id",
@@ -1188,24 +1272,25 @@ const MUTATIONS: Mutation[] = [
   {
     id: "cache-checked-after-ratelimit",
     file: "src/provider.ts",
-    find: '    // A hit returns HERE, before the rate limiter. A turn that already paid for\n    // its lookup must not be refused for asking about it a second time.\n    const cached = readTurnCache(turnCache, key, now);\n    if (cached !== null) {\n      return {\n        text: cached.text,\n        values: { ...cached.values },\n        data: { ...cached.data, xrplCache: "hit" },\n      };\n    }\n\n    const limit = checkRateLimit(stamps, now);\n    // NEVER stored. This message asserts a fact about now, that the limit "has\n    // been reached", so replaying it after the window reopened would be a false\n    // statement in report content, and a refusal message is the only text the\n    // model gets when a lookup fails.\n    if (!limit.ok) return speak(limit, skipped, cacheState);',
+    // Search text updated when F8 gave speak() its unreadable-run count.
+    find: '    // A hit returns HERE, before the rate limiter. A turn that already paid for\n    // its lookup must not be refused for asking about it a second time.\n    const cached = readTurnCache(turnCache, key, now);\n    if (cached !== null) {\n      return {\n        text: cached.text,\n        values: { ...cached.values },\n        data: { ...cached.data, xrplCache: "hit" },\n      };\n    }\n\n    const limit = checkRateLimit(stamps, now);\n    // NEVER stored. This message asserts a fact about now, that the limit "has\n    // been reached", so replaying it after the window reopened would be a false\n    // statement in report content, and a refusal message is the only text the\n    // model gets when a lookup fails.\n    if (!limit.ok) return speak(limit, allNamed, hidden, cacheState);',
     replace:
-      '    const limit = checkRateLimit(stamps, now);\n    if (!limit.ok) return speak(limit, skipped, cacheState);\n\n    const cached = readTurnCache(turnCache, key, now);\n    if (cached !== null) {\n      return {\n        text: cached.text,\n        values: { ...cached.values },\n        data: { ...cached.data, xrplCache: "hit" },\n      };\n    }',
+      '    const limit = checkRateLimit(stamps, now);\n    if (!limit.ok) return speak(limit, allNamed, hidden, cacheState);\n\n    const cached = readTurnCache(turnCache, key, now);\n    if (cached !== null) {\n      return {\n        text: cached.text,\n        values: { ...cached.values },\n        data: { ...cached.data, xrplCache: "hit" },\n      };\n    }',
     why: "a turn that already paid for its lookup is refused for asking a second time, so the router gets a report and the planner gets a rate-limit refusal inside one turn",
   },
   {
     id: "cache-caches-rate-limited",
     file: "src/provider.ts",
-    find: "    if (!limit.ok) return speak(limit, skipped, cacheState);",
-    replace: "    if (!limit.ok) return remember(speak(limit, skipped, cacheState));",
+    find: "    if (!limit.ok) return speak(limit, allNamed, hidden, cacheState);",
+    replace: "    if (!limit.ok) return remember(speak(limit, allNamed, hidden, cacheState));",
     why: "the message asserts a fact about NOW, that the limit has been reached. Replayed after the window reopens it is a false statement in the only text the model gets",
   },
   {
     id: "cache-caches-address-malformed",
     file: "src/provider.ts",
-    find: '    if (!address.ok) return speak(address, skipped, "not-cacheable");',
+    find: '    if (!address.ok) return speak(address, allNamed, hidden, "not-cacheable");',
     replace:
-      '    if (!address.ok) {\n      const t = deps.now();\n      const k = turnCacheKey({\n        agentId: runtime?.agentId,\n        messageId: message?.id,\n        address: first,\n        skipped,\n        now: t,\n      });\n      const c = readTurnCache(turnCache, k, t);\n      if (c !== null) {\n        return { text: c.text, values: { ...c.values }, data: { ...c.data, xrplCache: "hit" } };\n      }\n      const spoken = speak(address, skipped, "miss");\n      writeTurnCache(turnCache, k, spoken, t);\n      return spoken;\n    }',
+      '    if (!address.ok) {\n      const t = deps.now();\n      const k = turnCacheKey({\n        agentId: runtime?.agentId,\n        messageId: message?.id,\n        address: first,\n        skipped,\n        now: t,\n      });\n      const c = readTurnCache(turnCache, k, t);\n      if (c !== null) {\n        return { text: c.text, values: { ...c.values }, data: { ...c.data, xrplCache: "hit" } };\n      }\n      const spoken = speak(address, allNamed, hidden, "miss");\n      writeTurnCache(turnCache, k, spoken, t);\n      return spoken;\n    }',
     why: "nothing read the ledger, so there is nothing a later call could legitimately replay, and it keys the cache on an UNVALIDATED candidate string",
   },
   {
@@ -1307,7 +1392,10 @@ const MUTATIONS: Mutation[] = [
   {
     id: "index-drops-turncache-exports",
     file: "src/index.ts",
-    find: 'export {\n  type CachedResult,\n  type CachedScalar,\n  createTurnCache,\n  isUuidLike,\n  readTurnCache,\n  TURN_CACHE_KEY_SEPARATOR,\n  type TurnCache,\n  type TurnCacheEntry,\n  type TurnCacheKeyInput,\n  turnCacheKey,\n  writeTurnCache,\n} from "./core/turncache.ts";',
+    // Search text updated when F7 exported skippedDigest beside isUuidLike, for
+    // the reason the header of that module gives: a predicate the key builder
+    // depends on lives where a test can reach it directly.
+    find: 'export {\n  type CachedResult,\n  type CachedScalar,\n  createTurnCache,\n  isUuidLike,\n  readTurnCache,\n  skippedDigest,\n  TURN_CACHE_KEY_SEPARATOR,\n  type TurnCache,\n  type TurnCacheEntry,\n  type TurnCacheKeyInput,\n  turnCacheKey,\n  writeTurnCache,\n} from "./core/turncache.ts";',
     replace: "",
     why: "every test imports ../core/turncache.ts directly, so losing the re-export is invisible to the suite and total for a consumer, which has the package entry point and nothing else",
   },
@@ -1324,6 +1412,749 @@ const MUTATIONS: Mutation[] = [
     find: '  "src/transport/client.ts",\n',
     replace: "",
     why: "the array's comment states the rule as every module under src/core PLUS the transport and the provider, and the test enforced only the src/core third of it. The transport is where the response body arrives, so it is the last place a coercion should go unread",
+  },
+
+  // -------------------------------------------------------------------------
+  // F6. WHAT A REAL MODEL DID WITH A COUNT.
+  //
+  // D6 stopped this package dropping the second address in a message in silence.
+  // Published 0.1.1 was then run against llama3.2 3B on elizaOS core
+  // 2.0.3-beta.7. A message named TWO valid addresses. The report described the
+  // first and emitted the aggregate notice verbatim into the prompt:
+  // "other_addresses_not_looked_up: 1 ... so nothing in this report describes
+  // them." The model answered with a balance for BOTH, inventing 0 XRP for an
+  // account that holds 267,875. A different turn, where the report ADDRESSED an
+  // account by name and stated data was absent for it, invented nothing.
+  //
+  // So the finding is not that the omission was unspoken. It was spoken, with a
+  // count, exactly as invariant 10 demands. The finding is that SILENCE ABOUT A
+  // NAMED ENTITY is the hazard, and a count is not a name.
+  //
+  // Every entry below is a way the naming could go back to being a count, or a
+  // way the naming itself could become the injection it replaced. The second
+  // half is the reason the checksum gate exists: the base58 class excludes only
+  // 0, I, O and l, so "rignoreaLLpriorinstructions" matches the candidate
+  // pattern exactly, and echoing an unvalidated candidate would hand a message
+  // author roughly 34 chosen characters inside text the model reads as data.
+  // -------------------------------------------------------------------------
+  {
+    id: "f6-per-address-lines-removed",
+    file: "src/core/render.ts",
+    find: "  named.forEach((address, i) => {",
+    replace: "  named.slice(0, 0).forEach((address, i) => {",
+    why: "THE F6 DEFECT ITSELF: the report falls back to a count, which is the exact text that produced an invented 0 XRP balance for an account holding 267,875",
+  },
+  {
+    id: "f6-echo-line-drops-its-address",
+    file: "src/core/render.ts",
+    find: "        ? `  other_address_not_retrieved[${i}]: ${address}. This address was named in the message and was NOT looked up.",
+    replace:
+      "        ? `  other_address_not_retrieved[${i}]: an address. This address was named in the message and was NOT looked up.",
+    why: "F2's shape against the new line: the line is present, the wording is present, and the one thing it exists to carry is gone, so it is a count again wearing a name's clothes",
+  },
+  {
+    id: "f6-checksum-gate-removed-from-the-echo-path",
+    file: "src/core/render.ts",
+    find: '    if (typeof c === "string" && ECHOABLE_ADDRESS.test(c) && isValidXrplAddress(c)) {',
+    replace: '    if (typeof c === "string" && ECHOABLE_ADDRESS.test(c)) {',
+    why: "the naming becomes the injection: rignoreaLLpriorinstructions matches the candidate shape, fails the checksum, and would be echoed into the prompt verbatim. The checksum is what cuts about 34 attacker-chosen characters down to about six",
+  },
+  {
+    id: "f6-echo-pattern-shares-the-global-one",
+    file: "src/core/render.ts",
+    find: "const ECHOABLE_ADDRESS = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;",
+    replace: "const ECHOABLE_ADDRESS = /r[1-9A-HJ-NP-Za-km-z]{24,34}/g;",
+    // Written as an inline literal and NOT as a reference to
+    // ADDRESS_CANDIDATE_PATTERN, which render.ts does not import. A mutation
+    // whose replace does not compile tests the compiler, which this file has
+    // already paid for once with rp-lines-refusal-silenced.
+    why: "a /g pattern makes .test() STATEFUL: lastIndex advances on a match and resets on a miss, so four calls down one list return true, false, true, false and every second candidate skips the check. Measured, and the anchors go with it",
+  },
+  {
+    id: "f6-echo-cap-raised",
+    file: "src/core/bounds.ts",
+    find: "  MAX_ECHOED_ADDRESSES: 3,",
+    replace: "  MAX_ECHOED_ADDRESSES: 60,",
+    why: "each echoed line costs roughly 0.8 trust lines of real ledger data, and a refusal has no other size bound at all: the notice renderer's cap is what keeps speak() inside MAX_RENDERED_CHARS",
+  },
+  {
+    id: "f6-echo-cap-removed",
+    file: "src/core/render.ts",
+    find: "  const named = p.echoable.slice(0, room);",
+    replace: "  const named = p.echoable.slice(0);",
+    why: "the same bound removed at the site that enforces it rather than at the constant, which is the half a test reading BOUNDS cannot see",
+  },
+  // The cap notice became TWO notices in F7, because the one it was stated a
+  // reason that was false. Four valid candidates, no trust lines, a report
+  // measured at 1,490 of 4,000 characters, and a line saying an address was held
+  // back "to keep this report inside its character bound". With 2,510 characters
+  // spare that is untrue: the reason was the per-report policy cap on how many
+  // addresses are NAMED. Both reasons are real and they are different facts, so
+  // each carries its own count at a threshold of one.
+  {
+    id: "f6-cap-notice-suppressed",
+    file: "src/core/render.ts",
+    find: "  if (heldByCap > 0) {",
+    replace: "  if (heldByCap < 0) {",
+    why: "invariant 10: the cap is a REASON to omit, and it was the reason that would have said nothing. A report naming three of sixty addresses reads as a report about all the ones that mattered",
+  },
+  {
+    id: "f6-cap-notice-threshold-off-by-one",
+    file: "src/core/render.ts",
+    find: "  if (heldByCap > 0) {",
+    replace: "  if (heldByCap > 1) {",
+    why: "the threshold is ONE. Holding back exactly one address is the smallest case that must be stated, and it is the case a fixture of sixty never reaches",
+  },
+  {
+    id: "f6-cap-notice-count-dropped",
+    file: "src/core/render.ts",
+    find: "      `  other_addresses_not_named_cap: ${heldByCap}. That many of the addresses counted above are not named individually here, because this report names at most ${BOUNDS.MAX_ECHOED_ADDRESSES} of them. This report is INCOMPLETE on that point.`,",
+    replace:
+      "      `  other_addresses_not_named_cap: some. That many of the addresses counted above are not named individually here, because this report names at most ${BOUNDS.MAX_ECHOED_ADDRESSES} of them. This report is INCOMPLETE on that point.`,",
+    why: "F2 again: a count asserted against the whole report is satisfied by any stray digit, and this report already carries a balance full of them",
+  },
+  {
+    id: "f7-cap-notice-claims-a-size-reason-it-cannot-support",
+    file: "src/core/render.ts",
+    find: "      `  other_addresses_not_named_cap: ${heldByCap}. That many of the addresses counted above are not named individually here, because this report names at most ${BOUNDS.MAX_ECHOED_ADDRESSES} of them. This report is INCOMPLETE on that point.`,",
+    replace:
+      "      `  other_addresses_not_named_cap: ${heldByCap}. That many of the addresses counted above are not named individually here, to keep this report inside its character bound. This report is INCOMPLETE on that point.`,",
+    why: "THE FALSE REASON ITSELF. Measured at 1,490 of 4,000 characters with 2,510 to spare, so the size claim is untrue on the exact input that produces it, and a refusal message is report content with no successful report beside it to contradict a wrong sentence",
+  },
+  {
+    id: "f7-cap-notice-says-they-were-all-named",
+    file: "src/core/render.ts",
+    // LENGTH-PRESERVING, deliberately: "are not" and "are all" are both seven
+    // characters, so no length-sensitive test can catch this and only an
+    // assertion on the CLAUSE can. It survived until one existed.
+    find: "counted above are not named individually here, because this report names at most",
+    replace: "counted above are all named individually here, because this report names at most",
+    why: "the clause is the whole content of the notice: mutated, a report that named three of four addresses tells the model it named all four, and the count beside it becomes unreadable",
+  },
+  {
+    id: "f7-room-notice-suppressed",
+    file: "src/core/render.ts",
+    find: "  if (droppedForRoom > 0) {",
+    replace: "  if (droppedForRoom < 0) {",
+    why: "the SIZE reason, and it is the one the refusal path depends on. A name given up for room is as omitted as a name given up for the cap, and invariant 10 admits no reason that goes unspoken",
+  },
+  {
+    id: "f7-room-notice-threshold-off-by-one",
+    file: "src/core/render.ts",
+    find: "  if (droppedForRoom > 0) {",
+    replace: "  if (droppedForRoom > 1) {",
+    why: "the threshold is ONE, and one name dropped for room is the first thing the size search ever does",
+  },
+  {
+    id: "f7-room-notice-count-dropped",
+    file: "src/core/render.ts",
+    find: "      `  other_addresses_not_named_for_room: ${droppedForRoom}. That many of the addresses counted above were dropped from the names above to keep this text inside its character bound. This report is INCOMPLETE on that point.`,",
+    replace:
+      "      `  other_addresses_not_named_for_room: some. That many of the addresses counted above were dropped from the names above to keep this text inside its character bound. This report is INCOMPLETE on that point.`,",
+    why: "F2 against the fourth count, which is the one that has to add up with the other three for the report to be internally consistent",
+  },
+  {
+    id: "f6-invalid-notice-suppressed",
+    file: "src/core/render.ts",
+    find: "  if (p.notValid > 0) {",
+    replace: "  if (p.notValid < 0) {",
+    why: "a candidate refused for its checksum is still an omission, and it is the omission least likely to be noticed because nothing about it can be printed",
+  },
+  {
+    id: "f6-invalid-notice-threshold-off-by-one",
+    file: "src/core/render.ts",
+    find: "  if (p.notValid > 0) {",
+    replace: "  if (p.notValid > 1) {",
+    why: "the threshold is ONE, and one mistyped address in a message is the ordinary case rather than the exotic one",
+  },
+  {
+    id: "f6-invalid-notice-count-dropped",
+    file: "src/core/render.ts",
+    find: "      `  other_addresses_not_valid: ${p.notValid} of the candidates counted above did not pass address validation, so they are NOT named here and nothing in this report describes them.`,",
+    replace:
+      "      `  other_addresses_not_valid: some of the candidates counted above did not pass address validation, so they are NOT named here and nothing in this report describes them.`,",
+    why: "F2's shape against the third of the three counts, which is the one that has to add up with the other two",
+  },
+  {
+    id: "f6-non-list-invents-a-count",
+    file: "src/core/render.ts",
+    find: "  if (!Array.isArray(candidates)) return null;",
+    replace: "  if (!Array.isArray(candidates)) return { total: 1, echoable: [], notValid: 1 };",
+    why: "invariant 7 one field over: nothing was measured, so a count stated for an absent list is a number this package never counted, and the outer catch passes an empty list precisely because it knows nothing",
+  },
+  {
+    id: "f6-names-dropped-before-trust-rows",
+    file: "src/core/render.ts",
+    find: "    const report = build(kept, BOUNDS.MAX_ECHOED_ADDRESSES);",
+    replace: "    const report = build(kept, 0);",
+    why: "the ORDER of the two-stage size search. A dropped trust row is one more line about an account the report already describes; a dropped name is the only thing standing between the model and an invented balance for a different one",
+  },
+  {
+    id: "f6-echo-lines-not-paid-for-by-the-size-search",
+    file: "src/core/render.ts",
+    find: "  for (let echoKept = BOUNDS.MAX_ECHOED_ADDRESSES - 1; echoKept >= 0; echoKept--) {",
+    replace: "  for (let echoKept = -1; echoKept >= 0; echoKept--) {",
+    why: "without the second stage the report falls straight to the hard character cut whenever the names do not fit, and a hard cut over a build holding an address is the next entry",
+  },
+  {
+    id: "f6-hard-cut-runs-over-a-build-holding-names",
+    file: "src/core/render.ts",
+    find: "  return build(0, 0).slice(0, BOUNDS.MAX_RENDERED_CHARS - marker.length) + marker;",
+    replace:
+      "  return build(0, BOUNDS.MAX_ECHOED_ADDRESSES).slice(0, BOUNDS.MAX_RENDERED_CHARS - marker.length) + marker;",
+    // MEASURED before this entry was written, not argued: at a balance of 1,653
+    // digits the mutated cut emits
+    //   other_address_not_retrieved[0]: rKUK9omZqVEnraCipKNFb5q4tuNTeqED
+    // which is 32 of 34 characters and still reads as an address. The test that
+    // catches it SWEEPS the transition region, because a list of round widths
+    // walks straight past 1,653.
+    why: "F1 one level up. The last resort cuts CHARACTERS, so running it over a build that still holds a name ends mid-base58 and emits a shortened string that names an account which does not exist",
+  },
+  {
+    id: "f6-refusal-drops-the-per-address-lines",
+    // Moved with the refusal renderer in F9. Same line, different file.
+    file: "src/core/render.ts",
+    find: '  const tail = others.length === 0 ? "" : `\\n${others.join("\\n")}`;',
+    replace: '  const tail = others.length === 0 ? "" : ` ${others[0]}`;',
+    why: "the refusal keeps the aggregate line and loses every name, which is the published 0.1.1 behaviour on the path where the model has NO successful report beside it to contradict a guess",
+  },
+  {
+    id: "f6-outer-catch-invents-a-count",
+    file: "src/provider.ts",
+    // Search text updated when F8 gave speak() its unreadable-run count, which
+    // this branch passes as a literal zero for the same reason it passes an
+    // empty list.
+    find: '          [],\n          NOTHING_SCANNED,\n          "not-cacheable",',
+    replace:
+      '          ["rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh"],\n          NOTHING_SCANNED,\n          "not-cacheable",',
+    why: "invariant 10's one deliberate exception, fixed into a lie: run() can throw before it has read the message, so this branch cannot know any address, and naming one would put an account into the prompt that nothing measured",
+  },
+  {
+    id: "unreadable-outer-catch-invents-a-count",
+    file: "src/provider.ts",
+    find: '          [],\n          NOTHING_SCANNED,\n          "not-cacheable",',
+    replace: '          [],\n          { count: 3, capped: true },\n          "not-cacheable",',
+    why: "the same exception one field over. run() can throw before it has read the message text at all, so this branch can say neither that a run was there nor that one was not, and a count it never measured is a number in report content that nothing can contradict",
+  },
+  {
+    id: "cache-key-given-the-raw-list-not-a-digest",
+    file: "src/provider.ts",
+    // Renamed from cache-key-given-the-list-not-the-count when the key component
+    // became a digest. The defect is unchanged: hand turnCacheKey something that
+    // is not the shape it partitions on and every key is null.
+    // Search text updated when F8 gave skippedDigest its second component.
+    find: "      skipped: skippedDigest(skipped, hidden.count),",
+    replace: "      skipped,",
+    why: "turnCacheKey admits only the exact digest shape and returns null for anything else, so handing it the array makes every key null, turns cacheState into not-cacheable without a word, and silently restores the doubled network lookup the cache exists to remove",
+  },
+
+  // -------------------------------------------------------------------------
+  // F7. THE REPAIR PASS, and every entry below is a defect an adversarial
+  // verifier reproduced against the F6 change rather than one this repo shipped.
+  //
+  // The one to read is the first. F6 made the report NAME the addresses it
+  // skipped, and left the cache key carrying only how MANY were skipped. The two
+  // then disagreed: one agentId, one message.id, turn 1 "A and B", turn 2 "A and
+  // C", inside the TTL. Turn 2 reported cacheState "hit" and was served turn 1's
+  // report, which NAMES B. B was never in turn 2's message, C vanished with no
+  // notice, and every count in the served report still added up, so the report
+  // was internally consistent while describing a different message. Memory.id is
+  // caller-shaped input, which is why isUuidLike exists, so that collision is
+  // reachable under this module's own threat model.
+  //
+  // The rule it earns, and it generalises past the cache: A KEY MUST BE
+  // DETERMINED BY WHAT THE THING IT KEYS IS DETERMINED BY. A count beside a list
+  // is two values that can disagree, and this repo keeps finding that shape.
+  // -------------------------------------------------------------------------
+  {
+    id: "f7-cache-key-carries-only-the-skipped-count",
+    file: "src/provider.ts",
+    // THE DEFECT ITSELF, reproduced exactly: the identities erased, the count
+    // preserved. Mapping every entry to one constant is the count form written
+    // as a digest, which is what makes it the faithful reproduction rather than
+    // an approximation of it.
+    // Search text updated when F8 gave skippedDigest its second component.
+    find: "      skipped: skippedDigest(skipped, hidden.count),",
+    replace:
+      '      skipped: skippedDigest(\n        skipped.map(() => "x"),\n        hidden.count,\n      ),',
+    why: "two turns sharing one message.id and skipping DIFFERENT single addresses land on one entry, and the second is served a report naming an address its message never held while the address it did name vanishes with no notice",
+  },
+  {
+    id: "f7-report-names-its-own-subject-as-not-retrieved",
+    file: "src/core/render.ts",
+    find: "  const otherAddresses = partitionOtherAddresses(input?.otherAddressCandidates, subject);",
+    replace:
+      "  const otherAddresses = partitionOtherAddresses(input?.otherAddressCandidates, null);",
+    why: "the report prints `address: A` with a real balance AND a line saying A was not looked up and no balance for it appears anywhere in this report. One report, both claims, about one account, and the renderer is the file that decides what reaches the prompt",
+  },
+  {
+    id: "f7-renderer-delegates-distinctness-to-its-caller",
+    file: "src/core/render.ts",
+    find: "  for (const c of new Set(candidates)) {",
+    replace: "  for (const c of candidates) {",
+    why: "handed a list with repeats the report printed one account three times while the aggregate count implied three separate accounts, and the sweep that was supposed to cover it asserted only the length of the output",
+  },
+  {
+    id: "f7-notice-block-budget-ignored",
+    file: "src/core/render.ts",
+    find: '    if (lines.join("\\n").length <= budget) return lines;',
+    replace: "    if (lines.length >= 0) return lines;",
+    why: "the refusal path has no size search of its own: speak() applied no slice at all and was held inside MAX_RENDERED_CHARS by arithmetic over two constants, and the smallest MAX_ECHOED_ADDRESSES that busts it is seventeen",
+  },
+  {
+    id: "f7-notice-budget-defaults-to-unbounded",
+    file: "src/core/render.ts",
+    find: '  const budget = typeof maxChars === "number" && Number.isFinite(maxChars) ? maxChars : 0;',
+    replace:
+      '  const budget = typeof maxChars === "number" && Number.isFinite(maxChars) ? maxChars : Number.POSITIVE_INFINITY;',
+    why: "a caller that supplies no usable room gets every name it can hold rather than none, which is the fail-OPEN direction on the one path where nothing else measures the total",
+  },
+  {
+    id: "f7-refusal-notice-given-zero-room",
+    // Moved with the refusal renderer in F9. Same line, different file.
+    file: "src/core/render.ts",
+    find: "    BOUNDS.MAX_RENDERED_CHARS - head.length - 1,",
+    replace: "    0,",
+    why: "the room is measured from the refusal message actually built, so the wiring has to carry a real number. Zero silently costs the refusal every name, on the one path where the model has no successful report beside it to contradict a guess",
+  },
+  {
+    id: "f7-named-line-permits-a-balance",
+    file: "src/core/render.ts",
+    // LENGTH-PRESERVING: "and none may be stated  for it." is the same length as
+    // the shipped clause, so no assertion about the size of the report can see
+    // it. It survived until an assertion on the CLAUSE existed.
+    find: "and none may be stated for it.`,",
+    replace: "and one may be stated  for it.`,",
+    why: "THE sentence this whole change exists to produce. Mutated, the report tells the model a balance MAY be stated for an account it has just said was not retrieved, which is the invented figure F6 recorded, now licensed by the report itself",
+  },
+  {
+    id: "f7-invalid-notice-says-they-passed-validation",
+    file: "src/core/render.ts",
+    // Length-preserving again: "did not pass address validation" and "did pass
+    // address validation now" are the same length.
+    find: "did not pass address validation, so they are NOT named here",
+    replace: "did pass address validation now, so they are NOT named here",
+    why: "the clause states the opposite fact: these candidates failed a checksum and were never validated as accounts, and a line saying they passed and were withheld anyway is a false statement about the only thing the notice describes",
+  },
+  {
+    id: "f7-named-lines-all-print-index-zero",
+    file: "src/core/render.ts",
+    find: "        ? `  other_address_not_retrieved[${i}]: ${address}. This address was named in the message and was NOT looked up. No balance for it appears anywhere in this report, and none may be stated for it.`",
+    replace:
+      "        ? `  other_address_not_retrieved[0]: ${address}. This address was named in the message and was NOT looked up. No balance for it appears anywhere in this report, and none may be stated for it.`",
+    why: "the index was read by NOTHING. Both echoed() helpers match \\[\\d+\\] and neither looked at the number, so three names printing as [0] three times read as one omission repeated and survived the whole suite",
+  },
+
+  // -------------------------------------------------------------------------
+  // F8. THE OMISSION WITH NOTHING TO COUNT IT.
+  //
+  // ADDRESS_CANDIDATE_PATTERN is ASCII-only, so ONE invisible character inside
+  // an address makes the address invisible to the scanner. MEASURED against the
+  // shipped build: a message holding only
+  //   "rHb9CJAWyB4rj91VRWn9" + U+200B + "6DkukG4bwdtyTh"
+  // produced zero candidates, so run() returned silent(), text.length was 0,
+  // and on this runtime that contributes zero characters to the prompt. Not a
+  // wrong report about a named entity: NO report, and no marker anywhere.
+  //
+  // D6 was an omission stated with a count. F6 was a count that was not a name.
+  // This is an omission with nothing at all to count it, because the thing
+  // omitted never became a candidate in the first place.
+  //
+  // The unit is RUNS, and that is the honest unit rather than a cautious one:
+  // two poisoned runs may be one account, or none, and this package cannot
+  // tell. The lookup TARGET is unchanged, deliberately, because refusing the
+  // whole turn whenever a run is present would let one pasted zero-width space
+  // silence every XRPL lookup at zero attacker cost.
+  // -------------------------------------------------------------------------
+  {
+    id: "poisoned-only-message-goes-silent",
+    file: "src/provider.ts",
+    find: "    if ((!candidates || candidates.length === 0) && hidden.count === 0 && !hidden.capped) {\n      return silent();\n    }",
+    replace: "    if (!candidates || candidates.length === 0) {\n      return silent();\n    }",
+    why: "THE F8 DEFECT ITSELF: a message whose only address-shaped content carries an invisible character produces no candidate, so the provider returns empty text and the prompt gets nothing at all about an entity the message named",
+  },
+  {
+    id: "unreadable-run-count-goes-silent",
+    file: "src/core/render.ts",
+    find: "  if (hidden > 0) {",
+    replace: "  if (false) {",
+    why: "the notice removed at the site that emits it. The refusal still fires and still reads as a refusal, and the one line saying WHY nothing could be read is gone, which is invariant 10 with the omission unspoken again",
+  },
+  {
+    id: "unreadable-threshold-off-by-one",
+    file: "src/core/render.ts",
+    find: "  if (hidden > 0) {",
+    replace: "  if (hidden > 1) {",
+    why: "the threshold is ONE. A single poisoned run is the ordinary case rather than the exotic one, and it is exactly the case a fixture built from several never reaches",
+  },
+  {
+    id: "unreadable-run-echoed",
+    file: "src/provider.ts",
+    find: '    if (candidates === null || first === undefined) {\n      return speak(NO_READABLE_ADDRESS, [], hidden, "not-cacheable");\n    }',
+    replace:
+      '    if (candidates === null || first === undefined) {\n      return speak(\n        refuse("NO_READABLE_ADDRESS", `No XRPL address could be read from (${text}).`),\n        [],\n        hidden,\n        "not-cacheable",\n      );\n    }',
+    why: "NEVER ECHO, as a mutation. The run is attacker-written text carrying attacker-chosen invisible characters, and quoting it back puts both into the prompt inside a refusal the model reads as this plugin's own words. countUnreadableAddressRuns returns a NUMBER precisely so no code downstream holds a string it could print",
+  },
+  {
+    id: "unreadable-run-normalised",
+    file: "src/provider.ts",
+    find: "    const candidates = text.match(ADDRESS_CANDIDATE_PATTERN);",
+    replace:
+      '    const candidates = text\n      .replace(/[\\p{Default_Ignorable_Code_Point}\\p{Cf}]/gu, "")\n      .match(ADDRESS_CANDIDATE_PATTERN);',
+    why: "NO NORMALISATION, as a mutation. Stripping the splitters and looking up the result is a request about an account nobody typed, which is the class validateXrplAddress refuses by name one layer down when it declines to trim. It also spends a network call and a rate-limit slot on a message that named nothing readable",
+  },
+  {
+    id: "unreadable-count-out-of-cache-key",
+    file: "src/provider.ts",
+    find: "      skipped: skippedDigest(skipped, hidden.count),",
+    replace: "      skipped: skippedDigest(skipped, 0),",
+    why: "F7's defect one field over: two turns sharing an agentId, a message.id, a subject and a skipped list but holding DIFFERENT numbers of unreadable runs land on ONE entry, and the second is served the first's report. The run vanishes with every count in the served report still adding up, which is the exact shape the digest was introduced to make unrepresentable",
+  },
+  {
+    id: "unreadable-detector-list-not-property",
+    file: "src/core/address.ts",
+    // The hand list a reasonable person writes: zero-width, the joiners, word
+    // joiner, soft hyphen, BOM, and the bidi embeddings and overrides. It is 45
+    // of the 4,206 code points the two properties cover, and the escapes are
+    // written as escapes rather than characters because CLAUDE.md bans literal
+    // invisible characters in source and this harness writes real files.
+    find: "const HIDDEN_RUN_PATTERN =\n  /(?:[1-9A-HJ-NP-Za-km-z\\p{Default_Ignorable_Code_Point}\\p{Cf}\\uD800-\\uDFFF]|(?!\\s)\\p{Cc})+/gu;",
+    replace:
+      "const HIDDEN_RUN_PATTERN = /[1-9A-HJ-NP-Za-km-z\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u00AD\\uFEFF]+/gu;",
+    why: "a hand list is wrong by CONSTRUCTION here, and this proves the properties are what the scanner reads. The list above misses all 4,096 tag characters in U+E0000..U+E0FFF, every variation selector including U+FE0F, U+3164 HANGUL FILLER, U+115F, U+FFA0, U+180E, U+061C and the four isolates, so twelve of the twenty-five splitters the suite names go undetected and the message is silent again",
+  },
+  // -------------------------------------------------------------------------
+  // F9. THE REPAIR ROUND OVER F8, and every entry below is a defect an
+  // adversarial reviewer reproduced against the shipped F8 change rather than a
+  // hypothetical. It applied 43 source weakenings one at a time; sixteen stayed
+  // green.
+  //
+  // Two were live defects in F8's own code, and both are the SAME root cause:
+  // the run counter had no subject. It never asked whether the ordinary
+  // candidate scanner had already read an address out of the run it was
+  // counting, so one entity got reported twice.
+  //
+  //   "<a valid 34-character address>" + U+200B + "a" is 35 visible characters
+  //   and entered the window, so the report carried `address: A` with a real
+  //   balance AND a line saying no address was read from that run and that the
+  //   account described was not taken from it.
+  //
+  //   a splitter at visible index 25 or later leaves a candidate-shaped prefix,
+  //   so one further account was reported as `other_addresses_not_valid: 1` AND
+  //   as `unreadable_address_runs: 1`.
+  //
+  // One was a live defect that predates F8 and that F8 made worse by adding a
+  // second interpolation site: the refusal head had no bound and no sanitiser.
+  // `error.name` is an ordinary own property on an Error instance, so a hostile
+  // message getter chose it. MEASURED: 200,000 characters in, 200,093 out,
+  // fifty times MAX_RENDERED_CHARS, U+200B and U+202E included.
+  //
+  // The rest are guards that were never pinned by anything.
+  // -------------------------------------------------------------------------
+  {
+    id: "unreadable-run-counted-beside-its-own-address",
+    file: "src/core/address.ts",
+    find: "    if (CANDIDATE_IN_RUN.test(run)) continue;",
+    replace: "    if (false) continue;",
+    why: "THE F9 DEFECT ITSELF. Without the subject test one report says `address: A` with a real balance AND says no address was read from that run and that the account described was not taken from it. Both sentences about the same run, which is verbatim what partitionOtherAddresses' own docstring forbids one field over",
+  },
+  {
+    id: "unreadable-run-subject-test-is-stateful",
+    file: "src/core/address.ts",
+    find: "const CANDIDATE_IN_RUN = new RegExp(ADDRESS_CANDIDATE_PATTERN.source);",
+    replace: 'const CANDIDATE_IN_RUN = new RegExp(ADDRESS_CANDIDATE_PATTERN.source, "g");',
+    why: "the /g trap this repo has already been bitten by, in the newest place it could bite. A /g pattern makes .test() STATEFUL, so consecutive calls down a sweep return true, false, true, false and every second run is counted when it should not be",
+  },
+  {
+    id: "refusal-head-not-bounded",
+    file: "src/core/render.ts",
+    find: "  const kept = body.slice(0, BOUNDS.MAX_REFUSAL_MESSAGE_CHARS);",
+    replace: "  const kept = body;",
+    why: "MEASURED: an error name of 200,000 characters produced a ProviderResult.text of 200,093, fifty times MAX_RENDERED_CHARS. With the head uncapped the last-resort cut holds the LENGTH by eating the notice block beneath it, which is the half invariant 10 forbids dropping",
+  },
+  {
+    id: "refusal-head-not-printable",
+    file: "src/core/render.ts",
+    find: '  const printable = raw.replace(NOT_PRINTABLE_ASCII, "");',
+    replace: "  const printable = raw;",
+    why: "NEVER ECHO at the one interpolation an attacker controls: a name carrying U+200B and U+202E put both straight into the prompt, and a newline in it forges a new `key: value` line inside text the model reads as this plugin's own words",
+  },
+  {
+    id: "refusal-truncation-goes-silent",
+    file: "src/core/render.ts",
+    find: "  if (kept.length < body.length) {",
+    replace: "  if (false) {",
+    why: "invariant 10: a cut refusal message that says nothing reads as a complete one, and the model has no way to tell the difference",
+  },
+  {
+    id: "refusal-truncation-threshold-off-by-one",
+    file: "src/core/render.ts",
+    find: "  if (kept.length < body.length) {",
+    replace: "  if (kept.length + 1 < body.length) {",
+    why: "the threshold is ONE. A message cut by exactly one character is the smallest case that must be stated, and it is the case a 200,000-character fixture never reaches",
+  },
+  {
+    id: "refusal-removal-goes-silent",
+    file: "src/core/render.ts",
+    find: "  if (removed > 0) {",
+    replace: "  if (false) {",
+    why: "characters removed from a refusal message are an omission like any other. Silently deleting them leaves a message that reads as whole while its meaning may have changed",
+  },
+  {
+    id: "refusal-removal-threshold-off-by-one",
+    file: "src/core/render.ts",
+    find: "  if (removed > 0) {",
+    replace: "  if (removed > 1) {",
+    why: "the threshold is ONE, and ONE zero-width space is the whole finding this package spent a change on",
+  },
+  {
+    id: "refusal-blank-message-stays-blank",
+    file: "src/core/render.ts",
+    find: '    trimmed === ""\n      ? "The XRPL lookup was refused and no ledger data was retrieved. The reason given could not be displayed."\n      : trimmed;',
+    replace: "    trimmed;",
+    why: "a message that is entirely invisible characters cleans to nothing, and a refusal that says only its prefix tells the model less than src/core/result.ts already guarantees one layer down. An empty refusal is an invisible refusal",
+  },
+  {
+    id: "render-count-refuses-zero",
+    file: "src/core/render.ts",
+    find: '  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? String(v) : "<unavailable>";',
+    replace:
+      '  return typeof v === "number" && Number.isFinite(v) && v > 0 ? String(v) : "<unavailable>";',
+    why: "invariant 7's own sentence: a genuine 0 is real data and must survive. This turns owner_count 0 and account_sequence 0 into <unavailable>, for the exact two fields CLAUDE.md's rule-4 story is about, and neither had a single test at the value zero",
+  },
+  {
+    id: "unreadable-count-not-truncated",
+    file: "src/core/render.ts",
+    find: '  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;',
+    replace:
+      '  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;',
+    why: "the report prints `unreadable_address_runs: 2.9`, which is a count of runs that is not a whole number of runs. It survived F8 because the assertion was written `: 2\\b` and a word boundary sits between the 2 and the dot",
+  },
+  {
+    id: "drops-pattern-unanchored",
+    file: "src/core/render.ts",
+    find: "const DROPS = /^[0-9]+$/;",
+    replace: "const DROPS = /^[0-9]+/;",
+    why: 'MEASURED through the exported renderer: "100 " renders as a balance with a trailing space, and "100abc" makes dropsToXrp throw SyntaxError out of renderAccountReport, which on this runtime is the fail-OPEN case the whole package exists to avoid',
+  },
+  {
+    id: "control-chars-range-narrowed",
+    file: "src/core/render.ts",
+    find: "const CONTROL_CHARS = /[\\u0000-\\u001F\\u007F-\\u009F]/g;",
+    replace: "const CONTROL_CHARS = /[\\u0000-\\u001F\\u007F\\u009F]/g;",
+    why: "one hyphen turns a range into a list of two, and U+0085, U+0090 and U+009B then survive sanitizeLedgerText. The only test that touched this asserted a range that excluded the half being removed",
+  },
+  {
+    id: "success-values-drop-the-address",
+    file: "src/provider.ts",
+    find: "        xrplAddress: account.address,",
+    replace: '        xrplAddress: "",',
+    why: "xrplAddress had ZERO mentions across the whole suite and every file under checks/. It is the field a consumer reads instead of parsing the report text, so a wrong value there is wrong everywhere the report is not read",
+  },
+  {
+    id: "success-values-fabricate-a-zero-balance",
+    file: "src/provider.ts",
+    find: "        xrplBalanceDrops: account.balanceDrops,",
+    replace: '        xrplBalanceDrops: "0",',
+    why: "the same, and worse: a fabricated zero balance published on `values` for an account holding anything at all. Zero mentions in the suite meant this could not fail, and invariant 7 exists for exactly this sentence",
+  },
+  {
+    id: "ledger-error-code-becomes-internal",
+    file: "src/core/response.ts",
+    find: '      "LEDGER_ERROR",',
+    replace: '      "INTERNAL_ERROR",',
+    why: "LEDGER_ERROR appeared ZERO times in the suite, so it could be any string at all and a consumer branching on the code would branch on nothing. INTERNAL_ERROR also reads to an operator as a bug in this plugin rather than an answer from the node",
+  },
+  {
+    id: "response-too-large-code-becomes-malformed",
+    file: "src/core/response.ts",
+    find: '      "RESPONSE_TOO_LARGE",',
+    replace: '      "RESPONSE_MALFORMED",',
+    why: "RESPONSE_TOO_LARGE appeared ZERO times in the suite. A size refusal reported as a malformed one tells an operator the node is broken when the node is fine and the bound is this plugin's own",
+  },
+  {
+    id: "node-unreachable-code-becomes-timeout",
+    file: "src/transport/client.ts",
+    find: '        "NODE_UNREACHABLE",\n        `The XRPL node answered with HTTP ${res.status}, so no ledger data was retrieved.`,',
+    replace:
+      '        "NODE_TIMEOUT",\n        `The XRPL node answered with HTTP ${res.status}, so no ledger data was retrieved.`,',
+    why: "NODE_UNREACHABLE appeared ZERO times in the suite. A node that answered is not a node that timed out, and the two codes are the difference between retry and investigate",
+  },
+  {
+    id: "cache-key-sorts-the-skipped-list",
+    file: "src/provider.ts",
+    find: "      skipped: skippedDigest(skipped, hidden.count),",
+    replace: "      skipped: skippedDigest([...skipped].sort(), hidden.count),",
+    why: "the report prints the names IN ORDER, so a key that discards the order stops determining its own output: two turns sharing a message.id and naming the same two addresses the other way round land on ONE entry, and the second is served a report whose other_address_not_retrieved[0] names the wrong account. turncache.test.ts pins the order on the digest and structurally cannot see a caller that sorts before calling",
+  },
+  // -------------------------------------------------------------------------
+  // F9. THE SECOND ADVERSARIAL PASS, 69 weakenings, sixteen green. Two of them
+  // put the central predicate in question and SECURITY ruled on the design.
+  //
+  // The counter had no CHECKSUM, so any 25-to-35 character base58 run starting
+  // with a lowercase r and carrying one soft hyphen was counted, and soft
+  // hyphens are routine in copied typeset text. MEASURED phantoms:
+  // "rechtsbijstandsverzekering", "runtimeConfigurationSnapshot" and
+  // "requestAuthenticationMidd". End to end, "please rename
+  // runtime<U+00AD>ConfigurationSnapshot to something shorter" produced an
+  // 833-character refusal about an account that does not exist.
+  //
+  // And the joining class was too NARROW in the other direction: U+0001,
+  // U+0007, U+007F, U+0085 and a lone U+D800 all BROKE a run, so the provider
+  // returned zero characters, which is the original defect.
+  //
+  // The two are one design: the class widens to everything that renders as
+  // nothing, and the checksum is what makes that safe.
+  // -------------------------------------------------------------------------
+  {
+    id: "checksum-gate-removed",
+    file: "src/core/address.ts",
+    find: "    if (!isValidXrplAddress(visible)) continue;",
+    replace: "    if (false) continue;",
+    why: "THE F9 DEFECT ITSELF, and it is what makes the widened joining class safe. Without it any base58 run carrying one soft hyphen is counted: three ordinary words did it, and an unrelated turn got an 833-character refusal about an XRPL account that does not exist. A false statement in report content and the prompt pollution silent() exists to avoid",
+  },
+  {
+    id: "reconstruction-looked-up",
+    file: "src/provider.ts",
+    // SECURITY named this one. The first attempt at it could not fail, and that
+    // is recorded rather than quietly fixed: it added the repaired list behind
+    // `candidates?.[0] ??`, and the null guard one line below still refused, so
+    // the lookup target never changed. A mutation that cannot fail certifies a
+    // guard it never tested.
+    //
+    // This form does change the target. On "pay <poisoned A> and <B>" the raw
+    // scanner finds only B, and the repaired text yields A first, so the lookup
+    // goes to an account the message never actually contained.
+    find: "    const address = validateXrplAddress(first);",
+    replace:
+      '    const rebuilt = text\n      .replace(/[\\p{Default_Ignorable_Code_Point}\\p{Cf}]/gu, "")\n      .match(ADDRESS_CANDIDATE_PATTERN);\n    const address = validateXrplAddress(rebuilt?.[0] ?? first);',
+    why: "the RECONSTRUCTION becomes the LOOKUP TARGET. A repaired address is an address nobody typed, so the request is about an account the message never named, and it spends a network call and a rate-limit slot doing it. The target must stay candidates[0] from ADDRESS_CANDIDATE_PATTERN over the RAW text",
+  },
+  {
+    id: "reconstruction-echoed",
+    file: "src/provider.ts",
+    // SECURITY named this one. It has to be a BEHAVIOURAL mutation and not a
+    // change to the scan's return type: the harness runs vitest, which does not
+    // typecheck, so widening HiddenAddressScan alone could never go red and a
+    // mutation that cannot fail certifies a guard it never tested.
+    //
+    // This is the real shape of the defect. The reconstruction is built in the
+    // one place that holds the message text and printed in the refusal, which
+    // is exactly what the scan returning a NUMBER exists to make impossible.
+    find:
+      "    if (candidates === null || first === undefined) {\n" +
+      '      return speak(NO_READABLE_ADDRESS, [], hidden, "not-cacheable");\n    }',
+    replace:
+      '    if (candidates === null || first === undefined) {\n      return speak(\n        refuse(\n          "NO_READABLE_ADDRESS",\n          `No XRPL address could be read. The nearest was ${text.replace(/[\\p{Default_Ignorable_Code_Point}\\p{Cf}]/gu, "")}.`,\n        ),\n        [],\n        hidden,\n        "not-cacheable",\n      );\n    }',
+    why: "the RECONSTRUCTION reaches the prompt. It is an address nobody typed, assembled from attacker-written text, and printing it back tells the model an account exists that the message never actually named. countUnreadableAddressRuns returns a NUMBER precisely so that no code downstream holds the string it could print",
+  },
+  {
+    id: "hidden-address-not-distinct",
+    file: "src/core/address.ts",
+    // The first attempt removed the `counted.has` guard, which could not fail:
+    // the count is the SET's size, so a duplicate that got past the guard was
+    // de-duplicated by the add anyway. What makes the count distinct is the Set,
+    // so the mutation has to defeat the Set. Recorded rather than silently
+    // fixed, because a mutation that cannot fail is worse than none.
+    find: "    counted.add(visible);",
+    replace: "    counted.add(`${visible}${checksums}`);",
+    why: "one account hidden twice in a message becomes two omissions. Overstating an omission is the same class of inaccuracy as hiding one, and other_addresses_not_looked_up has counted DISTINCT strings since D6 for exactly this reason",
+  },
+  {
+    id: "hidden-address-not-excluded-when-already-described",
+    file: "src/core/address.ts",
+    find: "    if (rawCandidates.has(visible)) continue;",
+    replace: "    if (false) continue;",
+    why: "MEASURED: `compare A and A-with-a-zero-width-space` printed `address: A` with a real balance AND said an address hidden by invisible characters was never looked up and no balance may be stated for it. One report, both claims, one account, which is the defect partitionOtherAddresses' own docstring names",
+  },
+  {
+    id: "joining-class-drops-control-characters",
+    file: "src/core/address.ts",
+    find: "const HIDDEN_RUN_PATTERN =\n  /(?:[1-9A-HJ-NP-Za-km-z\\p{Default_Ignorable_Code_Point}\\p{Cf}\\uD800-\\uDFFF]|(?!\\s)\\p{Cc})+/gu;",
+    replace:
+      "const HIDDEN_RUN_PATTERN = /[1-9A-HJ-NP-Za-km-z\\p{Default_Ignorable_Code_Point}\\p{Cf}]+/gu;",
+    why: "U+0001, U+0007, U+007F, U+0085 and a lone U+D800 render as nothing and BREAK the run under this class, so the provider returns zero characters for a message carrying one. That is the original defect, reachable again through five code points nobody would think to type",
+  },
+  {
+    id: "joining-class-joins-whitespace",
+    file: "src/core/address.ts",
+    find: "|(?!\\s)\\p{Cc})+/gu;",
+    replace: "|\\p{Cc})+/gu;",
+    why: "the predicate is RENDERS AS NOTHING, and a newline is not nothing. Without the carve-out two real addresses on consecutive lines join into one 68-character run, and the reconstruction of a run a human reads as two things is not an address anyone wrote",
+  },
+  {
+    id: "hidden-address-cap-removed",
+    file: "src/core/address.ts",
+    find: "    if (checksums >= BOUNDS.MAX_ADDRESS_CHECKSUMS_PER_MESSAGE) {",
+    replace: "    if (false) {",
+    why: "an uncapped double-SHA loop driven by unrated conversation text, BEFORE checkRateLimit. MEASURED at 16.6ms over a hostile 99 KB message, roughly ten times the scan without checksums, and every millisecond of it chosen by whoever is talking to the agent",
+  },
+  {
+    id: "hidden-address-cap-goes-silent",
+    file: "src/core/render.ts",
+    find: "  if (capped) {",
+    replace: "  if (false) {",
+    why: "the cap is an omission this plugin chose for its own convenience, and invariant 10 admits no reason that goes unspoken. Silenced, a report that examined 64 of 4,000 hidden addresses reads as one that examined all of them",
+  },
+  {
+    id: "refusal-drops-its-own-subject",
+    file: "src/provider.ts",
+    find: "    const allNamed = [...new Set(candidates)];",
+    replace: "    const allNamed = skipped;",
+    why: 'MEASURED on `compare A and B and C` with the node answering an error: B and C each got "no balance may be stated for it" and A, the account the user actually asked about, got no name, no line and no guard. F6\'s own lesson inverted and pointed at the account that matters most',
+  },
+  {
+    id: "refusal-aggregate-claims-a-description",
+    file: "src/core/render.ts",
+    find: "      : `  other_addresses_not_looked_up: ${p.total}. The message held that many DISTINCT strings shaped like an XRPL address, INCLUDING the one this refusal is about.",
+    replace:
+      "      : `  other_addresses_not_looked_up: ${p.total}. The message held that many further DISTINCT strings shaped like an XRPL address, not counting the one this report describes.",
+    why: 'a refusal describes NOTHING, so a sentence saying "not counting the one this report describes" asserts a description that does not exist, and hides that the subject is inside the count. A refusal message is the only text the model gets when a lookup fails',
+  },
+  {
+    id: "refusal-named-line-claims-it-was-not-looked-up",
+    file: "src/core/render.ts",
+    find: "        : `  other_address_not_retrieved[${i}]: ${address}. This address was named in the message and no ledger data was retrieved for it.",
+    replace:
+      "        : `  other_address_not_retrieved[${i}]: ${address}. This address was named in the message and was never mentioned by it.",
+    why: "the clause has to be TRUE on a path where the address WAS looked up and the lookup failed. The report path says it was not looked up because it was not; the refusal path says no data was retrieved because that is what happened",
+  },
+  {
+    id: "outer-catch-reads-the-error-name-inline",
+    file: "src/provider.ts",
+    find: '    const name: unknown = error.name;\n    return typeof name === "string" ? name : "unknown error";',
+    replace: "    return String((error as Error).name);",
+    why: "invariant 1's last line of defence made to throw from inside itself. `name` is an ordinary property on an Error instance, so a subclass may define it as a getter, and MEASURED with `class HostileName extends Error { get name(){ throw } }` provider.get REJECTED, which this runtime erases entirely",
+  },
+  {
+    id: "refusal-head-states-only-its-first-omission",
+    file: "src/core/render.ts",
+    find: '  return `${REFUSAL_PREFIX}${kept}${notes.join("")}`;',
+    replace: '  return `${REFUSAL_PREFIX}${kept}${notes[0] ?? ""}`;',
+    why: "a refusal message can be BOTH over-length and carrying invisibles, and this states only the first. MEASURED: the head went from 751 characters to 609 and the suite stayed green, so a message that had been cut AND stripped reported only that it had been cut",
+  },
+  {
+    id: "ratelimit-refusal-drops-the-other-addresses",
+    file: "src/provider.ts",
+    find: "    if (!limit.ok) return speak(limit, allNamed, hidden, cacheState);",
+    replace: "    if (!limit.ok) return speak(limit, [], hidden, cacheState);",
+    why: "MEASURED: the rate-limit refusal shrank from 661 characters to 157 with the suite green. It is produced on turns that named several accounts, and it is the only text the model gets",
+  },
+  {
+    id: "lines-refusal-drops-the-other-addresses",
+    file: "src/provider.ts",
+    find: '    if ("ok" in linesResult && linesResult.ok === false) {\n      return remember(speak(linesResult, allNamed, hidden, cacheState));\n    }',
+    replace:
+      '    if ("ok" in linesResult && linesResult.ok === false) {\n      return remember(speak(linesResult, [], hidden, cacheState));\n    }',
+    why: "the same hole on the second half of the lookup: 606 characters to 102, green. Every refusal path carries the same list for the same reason",
+  },
+  {
+    id: "hidden-notice-claims-runs-it-cannot-count",
+    file: "src/core/render.ts",
+    find: "      `  addresses_hidden_by_invisible_characters: ${hidden}. The message held that many DISTINCT strings whose visible characters are a valid XRPL classic address,",
+    replace:
+      "      `  addresses_hidden_by_invisible_characters: ${hidden}. The message held that many runs of address-shaped characters, which this plugin cannot tell apart as accounts,",
+    why: "the CLAIM changed when the checksum gate landed, so the wording had to change with it. Under the gate every one counted is a checksum-valid address counted once, so the old hedge is false in the other direction: it understates what the report knows, in the only text the model gets",
   },
 ];
 

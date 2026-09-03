@@ -33,6 +33,7 @@
 // land on different keys. There is no defect behind a promise-sharing layer here
 // and adding one would be a layer no test could make fail.
 
+import { createHash } from "node:crypto";
 import { BOUNDS } from "./bounds.ts";
 
 /**
@@ -40,12 +41,21 @@ import { BOUNDS } from "./bounds.ts";
  *
  * Written as an escape because CLAUDE.md bans literal control characters in
  * source and checks/failopen_lint.ts fails the build on them. NUL cannot appear
- * in a UUID, in Ripple base58, or in a decimal integer, so no component can
- * forge a boundary and no two distinct inputs can concatenate to one key.
+ * in a UUID, in Ripple base58, or in lowercase hex, so no component can forge a
+ * boundary and no two distinct inputs can concatenate to one key.
  */
 export const TURN_CACHE_KEY_SEPARATOR = "\u0000";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The exact shape skippedDigest produces, and the only shape the key admits.
+ *
+ * ANCHORED and without /g. A /g pattern makes `.test()` stateful, so every
+ * second call on the same string returns false; src/core/render.ts records that
+ * measurement against a candidate pattern that carries the flag.
+ */
+const SKIPPED_DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
 /** Everything this package puts in a ProviderResult's values or data. */
 export type CachedScalar = string | number | boolean;
@@ -74,6 +84,21 @@ export interface TurnCacheKeyInput {
   readonly messageId: unknown;
   /** The VALIDATED address, never the raw candidate the pattern found. */
   readonly address: unknown;
+  /**
+   * The DIGEST of the skipped-address list AND the unreadable-run count, from
+   * skippedDigest below. One value for both, so they cannot disagree.
+   *
+   * A digest and not a count, because the report this key serves is determined
+   * by the skipped IDENTITIES and not only by how many there were. Under the
+   * count form, one agentId and one message.id with turn 1 saying "A and B" and
+   * turn 2 saying "A and C" produced ONE key: turn 2 hit, and was served a
+   * report naming B, an address its message never held, while C vanished with no
+   * notice and every count in the report still added up. Memory.id is
+   * caller-shaped, which is why isUuidLike exists, so that collision is
+   * reachable rather than hypothetical.
+   *
+   * One value, so the identities and the count cannot disagree.
+   */
   readonly skipped: unknown;
   readonly now: unknown;
 }
@@ -95,6 +120,59 @@ export function isUuidLike(value: unknown): value is string {
 }
 
 /**
+ * One value standing for everything about the MESSAGE that shapes the report,
+ * or null.
+ *
+ * The key has to be determined by what the REPORT is determined by. The report
+ * names the skipped addresses, so a component carrying only how many there were
+ * lets two different messages share one entry, and the served report then
+ * describes a message that was never sent.
+ *
+ * TWO FACTS, ONE COMPONENT. The report is determined by the skipped identities
+ * AND by how many runs of address-shaped characters the message held that could
+ * not be read, because the second is printed as its own notice. F8 REPRODUCED
+ * the same collision one field over: same agentId, same message.id, same
+ * subject, same skipped list, one poisoned run in turn 1 and two in turn 2.
+ * Turn 2 was served turn 1's report, which states one, and the second run
+ * vanished with every count in the served report still adding up. Two
+ * components would be two values that can disagree; hashing them together is
+ * what makes disagreement unrepresentable.
+ *
+ * Null on anything that is not a list of strings, and null is the safe
+ * direction: no key means the real work runs twice, which is the behaviour this
+ * module removes rather than one it breaks. A non-string entry cannot be
+ * rendered and cannot be compared as one, so digesting it would key on a
+ * coercion. The same holds for the count: a fractional, negative or non-finite
+ * one is a number nothing in this package can have measured.
+ *
+ * Order and length are both carried, because the report prints the names in
+ * order and counts them.
+ *
+ * The separator is what stops ["ab","c"] and ["a","bc"] digesting to one value.
+ * KNOWN LIMIT, stated rather than implied: an entry that itself contained NUL
+ * could forge a boundary, and an EMPTY list digests identically to a list
+ * holding one empty string. Nothing in this package produces either, because
+ * these come from a base58 candidate pattern, and a caller that supplies one
+ * gets a shared cache entry rather than anything it could not already have
+ * supplied.
+ */
+export function skippedDigest(candidates: unknown, unreadable: unknown): string | null {
+  if (!Array.isArray(candidates)) return null;
+  for (const c of candidates) {
+    if (typeof c !== "string") return null;
+  }
+  if (typeof unreadable !== "number" || !Number.isSafeInteger(unreadable) || unreadable < 0) {
+    return null;
+  }
+  return createHash("sha256")
+    .update(
+      `${String(unreadable)}${TURN_CACHE_KEY_SEPARATOR}${candidates.join(TURN_CACHE_KEY_SEPARATOR)}`,
+      "utf8",
+    )
+    .digest("hex");
+}
+
+/**
  * Build the key for one turn, or null when the turn cannot be cached safely.
  *
  * Null is the safe direction. A turn with no key does the real work twice, which
@@ -105,17 +183,19 @@ export function turnCacheKey(input: TurnCacheKeyInput): string | null {
   if (!isUuidLike(input.messageId)) return null;
   if (typeof input.address !== "string" || input.address === "") return null;
 
+  // The EXACT digest shape, and nothing else. A count, a raw list and an absent
+  // value are all refused here rather than stringified into a component, because
+  // String(anything) always produces a component and a component that always
+  // exists is a component that can never say "do not cache this turn".
   const skipped = input.skipped;
-  if (typeof skipped !== "number" || !Number.isInteger(skipped) || skipped < 0) return null;
+  if (typeof skipped !== "string" || !SKIPPED_DIGEST_PATTERN.test(skipped)) return null;
 
   // A corrupt clock is refused HERE rather than downstream. checkRateLimit fails
   // CLOSED on a non-finite clock, and a key built on one would put a cache read
   // in front of a limiter that would have refused the lookup.
   if (!Number.isFinite(input.now)) return null;
 
-  return [input.agentId, input.messageId, input.address, String(skipped)].join(
-    TURN_CACHE_KEY_SEPARATOR,
-  );
+  return [input.agentId, input.messageId, input.address, skipped].join(TURN_CACHE_KEY_SEPARATOR);
 }
 
 /**

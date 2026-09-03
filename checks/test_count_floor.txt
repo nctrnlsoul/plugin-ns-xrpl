@@ -1,4 +1,4 @@
-370
+545
 # The number of tests that must exist. Lowering this is allowed and has to be
 # deliberate, which is the whole point: a deletion is invisible when an addition
 # lands in the same edit.
@@ -270,5 +270,362 @@
 # the right floor, but it is now a MARGIN chosen against a gap this package
 # cannot measure (a stage-1 model generation inside the host), and both places
 # now say so rather than inventing a mechanism.
+#
+# If you lower this, say why in the commit message.
+# 370 to 394 by F6, and this one did not come from a reading of the code. It came
+# from running the published artifact against a real model.
+#
+# Published 0.1.1, driven by llama3.2 3B on elizaOS core 2.0.3-beta.7, was given
+# a message naming TWO valid addresses. The report described the first and
+# emitted D6's aggregate notice verbatim into the prompt:
+# "other_addresses_not_looked_up: 1 ... so nothing in this report describes
+# them." The model replied with a balance for BOTH, inventing 0 XRP for an
+# account that holds 267,875 XRP. A different turn, where the report ADDRESSED an
+# account by name and stated data was absent for it, invented nothing.
+#
+# So D6 was not wrong and this is not a repair of it. The omission WAS spoken,
+# with a count, exactly as invariant 10 demands. What the count could not do is
+# stop the model filling a gap it could not see the shape of. SILENCE ABOUT A
+# NAMED ENTITY is the hazard, and a count is not a name.
+#
+# The notice now names every skipped address it can, three of them, and counts
+# everything it cannot name. Twenty-four tests, and they split three ways.
+#
+# The naming itself: the one skipped address named on its own line, the cap-many
+# case named in full, the wording that says a named account was NOT looked up and
+# that no balance for it may be stated, and the negative control where a
+# single-address message emits no other-address line of any kind.
+#
+# The naming as a NEW INJECTION SURFACE, which is the half that earned the
+# checksum gate. The base58 class excludes only 0, I, O and l, so a 34-character
+# run of it spells English: "rignoreaLLpriorinstructions" matches the candidate
+# pattern exactly and fails the checksum. Echoing an unvalidated candidate would
+# hand a message author about 34 chosen characters inside text the model reads as
+# data; the checksum cuts that to about six. So: the positive property that every
+# echoed address is legal base58 that also passes the checksum, a readable
+# candidate proved absent from the report anywhere, and the three counts proved
+# to ADD UP to the total, which is the property a count nobody sums cannot have.
+#
+# The SIZE of it, because a refusal is report content and speak() had no cap at
+# all. Every MAX_RENDERED_CHARS assertion in the suite was on the success path.
+# A refusal behind sixty valid addresses is now driven through the real provider
+# and asserted inside the bound; fifty address-shaped tokens are proved not to
+# blow the report AND to reach the node exactly once.
+#
+# Two of the twenty-four are worth naming because the first version of each was
+# wrong in the way this file keeps recording. The hard-cut test used a list of
+# round balance widths and passed against a build that emits
+# `other_address_not_retrieved[0]: rKUK9omZqVEnraCipKNFb5q4tuNTeqED`, a 32 of 34
+# character cut that still reads as an address for a different account. That
+# defect appears at a balance of 1,653 digits and at almost no round number near
+# it, so the test now sweeps the whole transition region. And the second stage of
+# the size search, which gives up NAMES after it has given up trust rows, is
+# proved REACHABLE by search rather than asserted to be: an unreachable layer
+# cannot be tested, and this file already records what that costs.
+#
+# If you lower this, say why in the commit message.
+#
+# 394 to 419 by F7, which is a REPAIR pass: an adversarial verifier broke the F6
+# change and every test below pins one of the breaks rather than a new feature.
+#
+# The one to read is the cache. F6 made the report NAME the addresses it skipped
+# and left the turn cache keyed on how MANY were skipped. REPRODUCED: one
+# agentId, one message.id, turn 1 "A and B", turn 2 "A and C", two distinct valid
+# addresses and a skipped count of 1 either side, inside the TTL. Turn 2 reported
+# cacheState "hit" and was served turn 1's report, which NAMES B. B was never in
+# turn 2's message, C vanished with no notice, and every count in the served
+# report still added up, so the report was internally consistent while describing
+# a different message. The key is a DIGEST of the list now, and the threshold
+# test is the property the count form did not have: two lists of the SAME LENGTH
+# with DIFFERENT MEMBERS must produce different keys. The provider test that
+# proves it uses TWO message objects sharing one id, because the multi-address
+# test that already existed reuses one turn object and structurally cannot see it.
+#
+# Three were the renderer trusting its caller, in a file whose own docstring says
+# it defends its own inputs and decides what reaches the prompt. Handed its own
+# subject as a candidate it printed `address: A` with a real balance AND a line
+# saying A was not retrieved; handed a list with repeats it named one account
+# three times while the aggregate implied thirty, and the sweep that covered that
+# asserted only the length of the output. Both are decided in the renderer now,
+# by exact string comparison, and the sixty-entry fixture is sixty DISTINCT
+# entries.
+#
+# One was a notice stating a reason that was false. Four valid candidates, no
+# trust lines, a report measured at 1,490 of 4,000 characters, and a line saying
+# an address was held back "to keep this report inside its character bound". With
+# 2,510 characters to spare that is untrue. The policy cap and the size bound are
+# separate counts now, each at a threshold of one, and the tests assert the
+# REASON on the line that carries it rather than the presence of a number.
+#
+# Four are clauses that were pinned by nothing, and all four mutations were
+# LENGTH-PRESERVING, which is why every size-sensitive test in the file walked
+# past them: "and none may be stated for it" becoming "and one may be stated
+# for it", which is THE sentence this whole change exists to produce; "did not
+# pass address validation" becoming "did pass address validation now"; "are not
+# named individually here" becoming "are all named individually here"; and the
+# per-line index, which was read by NOTHING, so three names could all print as
+# [0]. Each is asserted on its own LINE now, not against the whole report.
+#
+# The rest are the refusal path's size bound, which was arithmetic over two
+# constants rather than code: speak() applied no slice, the worst case measured
+# 1,229 of 4,000, and the smallest MAX_ECHOED_ADDRESSES that busts it is 17. The
+# bound lives in the notice renderer now and is exercised DIRECTLY, by handing it
+# a small budget and searching for the drop of exactly one name, because with the
+# shipped cap of three no report input can reach it and a bound nothing can reach
+# is a bound nothing can test.
+#
+# One assertion was REMOVED rather than added, and that is deliberate:
+# `BOUNDS.MAX_ECHOED_ADDRESSES === 3` in the fixture block was a tautology that
+# made the cap-raised mutation red whatever the renderer did, so a reader could
+# not tell which assertion had fired. The cap is pinned behaviourally instead:
+# handed four valid candidates the report must name fewer than four.
+#
+# If you lower this, say why in the commit message.
+#
+# 419 to 470 by F8, which is D6 and F6 one layer further out and is the worst of
+# the three. D6 was an omission stated with a count. F6 was a count that was not
+# a name. This is an omission with NOTHING to count it, because the thing
+# omitted never became a candidate at all.
+#
+# ADDRESS_CANDIDATE_PATTERN is ASCII-only. MEASURED against the shipped build: a
+# message holding only "rHb9CJAWyB4rj91VRWn9" + U+200B + "6DkukG4bwdtyTh"
+# produced ZERO candidates, so run() returned silent(), text.length was 0, and
+# no network call was made. On this runtime an empty provider text contributes
+# zero characters to the prompt, so the model answered a question about a named
+# account from its own priors with nothing anywhere saying a lookup had been
+# attempted, refused or skipped. Not a wrong report: NO report.
+#
+# Position matters and both bands are measured. A splitter after k visible
+# characters gives 0 candidates for k=1..24, which is the silent band, and 1
+# candidate for k=25..33, which is a cut prefix that refuses loudly for its
+# checksum. Both are now counted and both are spoken.
+#
+# Fifteen tests over the scanner, and the one to keep is the splitter class. It
+# asserts counting for EVERY one of twenty-five code points, twelve of which the
+# obvious hand list misses, and it is the test that proves a Unicode PROPERTY
+# was used rather than a list somebody wrote out: 4,206 code points are
+# Default_Ignorable_Code_Point or Cf and the reasonable hand list covers 45. The
+# rest are the window at both ends (24 against 25, 35 against 36), the visible
+# set proved to be exactly the 58 base58 characters, the sweep over every
+# position, and the adjacency cases, because a splitter merely BESIDE an address
+# changes nothing and counting one would put a second omission into a report
+# where only one entity exists.
+#
+# One of the fifteen asserts a KNOWN GAP rather than a guarantee, and it is
+# named so it reads as one: a homoglyph, a combining mark and a fullwidth form
+# all defeat the candidate pattern the same way and none of them is
+# Default_Ignorable or Cf, so both counts are zero and the message is still
+# silent. It is written down because an unrecorded gap gets rediscovered as new,
+# and closing it means deciding what "address-shaped" means for a character that
+# is VISIBLE and wrong, which is a different question and a wider class that
+# would start counting ordinary prose.
+#
+# Fifteen over the renderer. The unit is RUNS and the tests say so, because two
+# poisoned runs may be one account or none and "N further addresses" would be a
+# number nothing measured. The positive property is that the emitted line is
+# printable ASCII only, which is stronger than "does not contain the run": the
+# scanner returns a NUMBER and never the strings, so there is structurally
+# nothing to print, and the test asserts the consequence rather than the intent.
+#
+# Thirteen through the provider, including the corpus test that is really about
+# a FALSE statement rather than a missing one: ordinary prose, a 64-char hex
+# digest, a git SHA-1, a base64 blob, a URL, both kinds of path, a UUID, an
+# emoji with U+FE0F, a ZWJ emoji family and Arabic with U+061C must all count
+# zero, because a notice fired by a pasted URL would be a claim about an entity
+# the message never held in the only text the model gets when a lookup fails.
+#
+# The remaining seven are the cache and the export surface. The cache one is
+# F7's defect one field over, and it was REPRODUCED before it was fixed: same
+# agentId, same message.id, same subject, same skipped list, one poisoned run in
+# turn 1 and two in turn 2. Turn 2 reported "hit" and was served turn 1's
+# report, which states one, so the second run vanished with every count in the
+# served report still adding up. The digest carries the count and the identities
+# as ONE component now.
+#
+# If you lower this, say why in the commit message.
+#
+# 470 to 515 by F9, a REPAIR pass over F8. An adversarial reviewer applied 43
+# source weakenings one at a time and sixteen stayed green. Three were live
+# defects in the code; the rest were guards nothing pinned.
+#
+# The two code defects in F8's own work share one root cause: the run counter
+# had no SUBJECT. It never asked whether the ordinary candidate scanner had
+# already read an address out of the run it was counting.
+#
+#   "<a valid 34-character address>" + U+200B + "a" is 35 visible characters, so
+#   it entered the 25..35 window, and the report then carried `address: A` with
+#   a real balance AND a line saying no address was read from that run and that
+#   the account described was NOT taken from it. Both sentences about the same
+#   run. That is verbatim the defect partitionOtherAddresses' own docstring
+#   names, one field over.
+#
+#   A splitter at visible index 25 or later leaves a candidate-shaped prefix, so
+#   one further account was reported as `other_addresses_not_valid: 1` AND as
+#   `unreadable_address_runs: 1`. Overstating an omission is the same class of
+#   inaccuracy as hiding one.
+#
+# One rule fixes both: a run is counted only when NO candidate could be
+# extracted from that same run. MEASURED after the fix, the whole k=1..33 sweep:
+# k=1..24 gives 0 candidates and 1 counted run, refused NO_READABLE_ADDRESS with
+# the notice; k=25..33 gives 1 candidate and 0 counted runs, refused
+# ADDRESS_MALFORMED with no notice. Every k still SPEAKS, and now says it once.
+#
+# Why F8's own tests could not see it is the part worth keeping. The adjacency
+# test used REAL_FUNDED + U+200B + REAL_COUNTERPARTY, which is 68 visible
+# characters and can NEVER enter the window. It was a comfortable example
+# wearing a threshold's clothes, which is this file's oldest lesson arriving
+# somewhere it had already been learned. The new block is threshold cases only,
+# all at visible === 35, with a negative control at the same width that has no
+# candidate in it and must still be counted.
+#
+# The third code defect is older than F8 and F8 made it worse. The refusal HEAD
+# had no bound and no sanitiser: `error.name` is an ordinary own property on an
+# Error instance, so whoever can make run() throw chooses it. MEASURED: a name
+# of 200,000 characters produced a ProviderResult.text of 200,093, fifty times
+# MAX_RENDERED_CHARS, and a name carrying U+200B and U+202E put both into the
+# prompt. That broke the size bound and NEVER ECHO at once.
+#
+# The head is now built in ONE exported function in src/core/render.ts, so every
+# present and future refusal message inherits the bound rather than each
+# interpolation site being patched. Thirteen tests: the printable-ASCII positive
+# property over hostile inputs, the newline that would forge a `key: value`
+# line, both thresholds at ONE (one removed character, one character over the
+# cap), the actual counts swept so no constant satisfies them, a supplementary
+# character counted as one and not two halves, and the negative control that an
+# ordinary refusal message is passed through verbatim.
+#
+# The assertion to read is "THE HEAD is what gives way, never the notice". The
+# bound could be held by cutting the tail, and that is the wrong half: the
+# notice is what invariant 10 forbids dropping and the head is what an attacker
+# influences. A 200,000-character message must still leave every count and every
+# name intact beneath it.
+#
+# The rest are guards that had no test at all, and three of them are invariant
+# 7's own sentence: a genuine 0 is real data and must survive. `renderCount`'s
+# `v >= 0` could become `v > 0` with the suite green, turning `owner_count: 0`
+# and `account_sequence: 0` into `<unavailable>` -- the exact two fields
+# CLAUDE.md's rule-4 story is about, and neither had ever been tested at zero.
+# `xrplAddress` and `xrplBalanceDrops` had ZERO mentions across the suite and
+# checks/, so the success path could publish a fabricated zero balance on
+# `values`, which is the field a consumer reads instead of parsing the report.
+# LEDGER_ERROR, NODE_UNREACHABLE and RESPONSE_TOO_LARGE were unmentioned in the
+# same way, so each is now driven through the provider on the path that produces
+# it, with a negative control proving a healthy lookup produces none of them.
+#
+# Two more are patterns whose SHAPE was never pinned. DROPS losing its `$`
+# anchor stayed green, and measured through the exported renderer it does two
+# kinds of damage: "100 " renders as a balance with a trailing space, and
+# "100abc" makes dropsToXrp throw SyntaxError out of renderAccountReport, which
+# on this runtime is the fail-OPEN case. CONTROL_CHARS losing one hyphen turns a
+# range into a list of two, and U+0085, U+0090 and U+009B then survive the
+# sanitiser; the sweep now walks all 65 code points one at a time.
+#
+# One is the cache again, and it is the third time the same rule has been broken
+# in a different place: a KEY MUST BE DETERMINED BY WHAT THE THING IT KEYS IS
+# DETERMINED BY. Sorting the skipped list before digesting it stayed green while
+# the two reports genuinely differ, because other_address_not_retrieved[0] names
+# a different account either side. turncache.test.ts pins the ORDER property on
+# the digest itself and structurally cannot see a caller that sorts first, so
+# the test that catches it drives two real turns through the provider.
+#
+# One is F8's own test being wrong rather than its code: `: 2\b` was asserted
+# against an input of 2.9, and a word boundary sits between the 2 and the dot,
+# so Math.trunc could be removed with the suite green. Every count assertion in
+# that block is anchored to the SENTENCE now.
+#
+# Two of the 515 assert a KNOWN GAP rather than a guarantee, and they are named
+# so they read as one. U+2028 and U+2029 are classified invisible by
+# src/core/render.ts and are NOT in the scanner's class, so an address split by
+# one is totally silent; the same holds for U+0489, U+20E3, U+2800 and the Zs
+# spaces U+00A0, U+2007, U+202F and U+3000, and for a homoglyph, a combining
+# mark and a fullwidth form. Written down because an unrecorded gap is
+# rediscovered as new, and because two files in this package now hold different
+# ideas of what "invisible" means -- which render.ts's own docstring now says.
+#
+# If you lower this, say why in the commit message.
+#
+# 515 to 545 by F9, a second adversarial pass: 69 weakenings, sixteen green, and
+# two of them put the central predicate in question. SECURITY ruled on the
+# design and this is that ruling implemented.
+#
+# THE COUNTER HAD NO CHECKSUM. Any run of 25 to 35 base58-class characters
+# starting with a lowercase r and carrying one soft hyphen was counted, and soft
+# hyphens are routine in copied typeset text. Three ordinary words did it:
+# "rechtsbijstandsverzekering", "runtimeConfigurationSnapshot" and
+# "requestAuthenticationMidd". End to end, "please rename
+# runtime<U+00AD>ConfigurationSnapshot to something shorter" produced an
+# 833-character refusal about an XRPL account that does not exist. A false
+# statement in report content, an overstated omission, and prompt pollution on a
+# turn with no XRPL content at all, which is the exact cost silent() exists to
+# avoid. MEASURED after the gate: all three count 0, and that sentence produces
+# 0 characters.
+#
+# AND THE JOINING CLASS WAS TOO NARROW in the other direction. U+0001, U+0007,
+# U+007F, U+0085 and a lone U+D800 render as nothing and BROKE a run, so the
+# provider returned text.length 0, which is the original defect. The class is
+# now "renders as nothing": base58, Default_Ignorable, Format, the control
+# characters that are not whitespace, and an unpaired surrogate. MEASURED after:
+# all five go 0 -> 1 and the provider speaks 819 characters. LF, TAB, CR, SPACE,
+# NBSP, U+2028, U+2029 and the Zs spaces still break, and two real addresses on
+# separate lines are still two addresses.
+#
+# The two are ONE design and the source says so: the widening is safe only
+# because the checksum makes a false positive roughly 2^-32, and if the gate
+# ever goes the class must revert in the same commit.
+#
+# The gate also closes two double-reports. A run the ordinary scanner already
+# read is excluded, and so is an account already in the raw candidate list:
+# MEASURED, `compare A and A-with-a-zero-width-space` printed `address: A` with
+# a real balance AND said an address hidden by invisible characters was never
+# looked up and no balance may be stated for it. One report, both claims, one
+# account. It counts 0 now, and a DISTINCT poisoned account still counts 1.
+#
+# THE CLAIM CHANGED, so the wording changed with it. The line is
+# `addresses_hidden_by_invisible_characters` now, it says DISTINCT valid classic
+# addresses, and the hedge "cannot tell how many accounts they correspond to" is
+# GONE because with the gate and the dedupe it can tell. Leaving that sentence
+# would have been the stale-comment failure CLAUDE.md records against
+# node-url.ts, in report content rather than in a comment.
+#
+# THE COST is a security bound, not a preference. The scan runs on unrated text
+# BEFORE checkRateLimit and a checksum is a double SHA-256: 16.6ms over a
+# hostile 99 KB message. MAX_ADDRESS_CHECKSUMS_PER_MESSAGE is 64 and MEASURED
+# after: 2.65ms on the same input, against 2.59ms for 99 KB of ordinary prose.
+# When it bites it is SPOKEN, at a threshold of one, because an omission this
+# plugin chose for its own convenience is still an omission.
+#
+# Two more code defects, and the first is the worse. THE OUTER CATCH COULD
+# THROW. It read `error.name` inline, `name` is an ordinary property on an Error
+# instance, and a subclass may define it as a getter that throws: provider.get
+# REJECTED from inside the catch that exists to stop exactly that, and a
+# rejected provider is erased entirely by this runtime. The last line of defence
+# was producing the silence it exists to prevent.
+#
+# And ON EVERY REFUSAL THE ONE ADDRESS THE USER ASKED ABOUT WAS THE ONLY ENTITY
+# NEVER NAMED. MEASURED on `compare A and B and C` with the node answering an
+# error: B and C each got "no balance may be stated for it" and A got no name,
+# no line and no guard. That is F6's own lesson inverted and pointed at the
+# account that matters most. A refusal describes nothing, so it has no subject
+# to exclude and every distinct candidate is in the list now, A included, and
+# the aggregate no longer says "not counting the one this report describes" on a
+# path where nothing is described.
+#
+# Four test-only holes are pinned too, each MEASURED green under its weakening:
+# the rate-limit refusal dropping its other addresses (661 characters to 157),
+# the account_lines refusal doing the same (606 to 102), a head that states only
+# the first of its two omissions (751 to 609), and the base58 charset test,
+# which probed with a run that was 26 visible when a character counted and 25
+# when it did not -- both inside the window, so removing a character from the
+# set changed no assertion. It is proved one character at a time now, against
+# 160 generated addresses, because under the checksum a missing character breaks
+# the reconstruction outright.
+#
+# One test asserts a KNOWN GAP the gate created, and SECURITY required it in the
+# shipped record: a run that is BOTH poisoned AND mistyped now says NOTHING,
+# where before the gate it was counted. The same test that rejects a phantom
+# rejects a genuine typo carrying an invisible character. The asymmetry is real
+# and accepted, and the clean form of the same typo is still spoken through
+# other_addresses_not_valid, which the companion test pins so the gap is bounded
+# rather than open-ended.
 #
 # If you lower this, say why in the commit message.

@@ -13,6 +13,11 @@
 /** Why a lookup did not produce an answer. Every one of these is reportable. */
 export type RefusalCode =
   | "ADDRESS_MALFORMED"
+  // The message named something address-shaped and NOTHING could be read from
+  // it, because invisible or formatting characters sit inside the run. A
+  // separate code from ADDRESS_MALFORMED because the two are different facts:
+  // that one refused a string it could read, this one read no string at all.
+  | "NO_READABLE_ADDRESS"
   | "ACCOUNT_NOT_FOUND"
   | "NODE_UNREACHABLE"
   | "NODE_TIMEOUT"

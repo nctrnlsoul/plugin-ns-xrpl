@@ -35,8 +35,26 @@ import { createXrplProvider } from "../provider.ts";
 
 const ADDR = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
 const PEER = "rKUK9omZqVEnraCipKNFb5q4tuNTeqEDZS";
+/** A third valid address, so two turns can skip DIFFERENT single addresses. */
+const THIRD = "rNjV3CeZ8puSpeiZqDmjAvfwxufLsiYRRX";
 /** Valid charset and length, bad checksum. rippled called this actMalformed. */
 const BAD = "rp4rt3JQKZaC7Docd1kUswQpQBGiRJs6Fk";
+/** A fourth valid address, so two turns can hide DIFFERENT single accounts. */
+const FOURTH = "rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B";
+
+/**
+ * An address with one ZERO WIDTH SPACE inside it, written as an escape and
+ * never as the character.
+ *
+ * It yields NO candidate at all, so it changes the report only through the
+ * hidden-address count. It poisons an address OTHER than the subject, because
+ * an account the report already describes is deliberately not counted twice.
+ */
+const poison = (address: string) => `${address.slice(0, 20)}\u200B${address.slice(20)}`;
+
+/** The name on an other_address_not_retrieved line, read off that line alone. */
+const echoedLine = (text: string, address: string) =>
+  new RegExp(`^ {2}other_address_not_retrieved\\[\\d+\\]: ${address}\\.`, "m").test(text);
 
 const AGENT_A = randomUUID();
 const AGENT_B = randomUUID();
@@ -81,10 +99,13 @@ function fetchByMethod(map: Record<string, unknown>) {
 const okFetch = () => fetchByMethod({ account_info: ACCOUNT_INFO_OK, account_lines: LINES_OK });
 
 describe("the fixtures are what this file claims they are", () => {
-  it("two valid distinct addresses and one that really fails its checksum", () => {
+  it("three valid distinct addresses and one that really fails its checksum", () => {
     expect(validateXrplAddress(ADDR).ok).toBe(true);
     expect(validateXrplAddress(PEER).ok).toBe(true);
+    expect(validateXrplAddress(THIRD).ok).toBe(true);
     expect(validateXrplAddress(BAD).ok).toBe(false);
+    expect(validateXrplAddress(FOURTH).ok).toBe(true);
+    expect(new Set([ADDR, PEER, THIRD, FOURTH]).size, "four distinct addresses").toBe(4);
     expect(AGENT_A).not.toBe(AGENT_B);
   });
 });
@@ -238,6 +259,172 @@ describe("the key admits a turn, or the turn is not cached at all", () => {
     const two = await provider.get(runtime, msg(`${ADDR} and ${PEER}`, id), undefined as never);
     expect(two.data?.xrplCache, "a different skipped count is a different key").toBe("miss");
     expect(two.text ?? "").toMatch(/^ {2}other_addresses_not_looked_up: 1\b/m);
+  });
+
+  it("a turn naming SEVERAL addresses is still cacheable: miss, then hit", async () => {
+    // turnCacheKey requires `skipped` to be a non-negative INTEGER. The skipped
+    // set became a LIST when the notice started naming addresses, and handing an
+    // array (or undefined) to the key builder makes the key null, turns
+    // cacheState into "not-cacheable" in silence, and brings back the doubled
+    // network lookup this cache exists to remove. Nothing else in the suite
+    // would say a word about it.
+    const fetchImpl = okFetch();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never, now: () => 1_000 });
+    const runtime = rt(AGENT_A);
+    const turn = msg(`compare ${ADDR} and ${PEER} and ${BAD}`, randomUUID());
+
+    const one = await provider.get(runtime, turn, undefined as never);
+    expect(one.data?.xrplCache, "a multi-address turn must still be cacheable").toBe("miss");
+    expect(one.text ?? "").toMatch(/^ {2}other_addresses_not_looked_up: 2\b/m);
+    const afterFirst = fetchImpl.mock.calls.length;
+    expect(afterFirst, "the first call must really have gone to the network").toBeGreaterThan(0);
+
+    const two = await provider.get(runtime, turn, undefined as never);
+    expect(two.data?.xrplCache, "the repeat of the same turn must HIT").toBe("hit");
+    expect(two.text).toBe(one.text);
+    expect(fetchImpl.mock.calls.length, "and fetch nothing at all").toBe(afterFirst);
+  });
+
+  it("two turns sharing one id but naming DIFFERENT further addresses never share a report", async () => {
+    // REPRODUCED against the count form of the key. Same agentId, same
+    // message.id, turn 1 "A and B", turn 2 "A and C". Two distinct valid
+    // addresses, a skipped count of 1 either side, inside the TTL. Turn 2
+    // reported "hit" and served turn 1's report, which NAMES B. B was never in
+    // turn 2's message and C vanished with no notice, while every count in the
+    // report still added up: a report internally consistent about a different
+    // message. Memory.id is caller-shaped input, which is why isUuidLike exists,
+    // so the collision is reachable rather than hypothetical.
+    //
+    // TWO DIFFERENT message objects sharing one id. Reusing one object cannot
+    // see this at all: the defect is that the key ignores WHICH addresses were
+    // skipped, and one object carries only one set of them.
+    const fetchImpl = okFetch();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never, now: () => 1_000 });
+    const runtime = rt(AGENT_A);
+    const id = randomUUID();
+
+    const one = await provider.get(runtime, msg(`${ADDR} and ${PEER}`, id), undefined as never);
+    expect(one.data?.xrplCache, "setup: the first turn must be cacheable").toBe("miss");
+    expect(echoedLine(one.text ?? "", PEER), "setup: turn one names B").toBe(true);
+    const afterFirst = fetchImpl.mock.calls.length;
+
+    const two = await provider.get(runtime, msg(`${ADDR} and ${THIRD}`, id), undefined as never);
+    expect(two.data?.xrplCache, "a different skipped LIST is a different key").toBe("miss");
+    expect(
+      fetchImpl.mock.calls.length,
+      "and the second turn really did its own lookup",
+    ).toBeGreaterThan(afterFirst);
+    expect(
+      echoedLine(two.text ?? "", PEER),
+      "it must NEVER name an address this turn's message did not hold",
+    ).toBe(false);
+    expect(echoedLine(two.text ?? "", THIRD), "and it must name the one it did").toBe(true);
+  });
+
+  it("two turns sharing one id but hiding DIFFERENT addresses never share a report", async () => {
+    // F8, and it is F7's defect one field over. The report is determined by the
+    // skipped identities AND by how many runs this plugin could not read,
+    // because both are printed. REPRODUCED against a digest carrying only the
+    // identities: same agentId, same message.id, same subject, same skipped list
+    // (empty either side), one poisoned run in turn 1 and two in turn 2, inside
+    // the TTL. Turn 2 reported "hit" and was served turn 1's report, which
+    // states one unreadable run. The second run vanished with no notice and
+    // every count in the served report still added up.
+    //
+    // TWO DIFFERENT message objects sharing one id, for the reason the test
+    // above gives: one object carries only one message.
+    const fetchImpl = okFetch();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never, now: () => 1_000 });
+    const runtime = rt(AGENT_A);
+    const id = randomUUID();
+
+    const one = await provider.get(
+      runtime,
+      msg(`${ADDR} and ${poison(THIRD)}`, id),
+      undefined as never,
+    );
+    expect(one.data?.xrplCache, "setup: the first turn must be cacheable").toBe("miss");
+    expect(one.text ?? "", "setup: turn one states ONE hidden address").toMatch(
+      /^ {2}addresses_hidden_by_invisible_characters: 1\b/m,
+    );
+    const afterFirst = fetchImpl.mock.calls.length;
+
+    const two = await provider.get(
+      runtime,
+      msg(`${ADDR} and ${poison(THIRD)} and ${poison(FOURTH)}`, id),
+      undefined as never,
+    );
+    expect(two.data?.xrplCache, "a different hidden-address count is a different key").toBe("miss");
+    expect(
+      fetchImpl.mock.calls.length,
+      "and the second turn really did its own lookup",
+    ).toBeGreaterThan(afterFirst);
+    expect(two.text ?? "", "it must state the count ITS message produced").toMatch(
+      /^ {2}addresses_hidden_by_invisible_characters: 2\b/m,
+    );
+  });
+
+  it("two turns sharing one id but naming the further addresses in a DIFFERENT ORDER never share a report", async () => {
+    // A key must be determined by what the thing it keys is determined by, and
+    // the report prints the names IN ORDER. MEASURED: sorting the skipped list
+    // before digesting it left the whole suite green while the two reports
+    // genuinely differ -- other_address_not_retrieved[0] names a different
+    // account either side. turncache.test.ts pins the ORDER property on the
+    // digest itself; it cannot see a caller that sorts before calling.
+    const fetchImpl = okFetch();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never, now: () => 1_000 });
+    const runtime = rt(AGENT_A);
+    const id = randomUUID();
+
+    const one = await provider.get(
+      runtime,
+      msg(`${ADDR} and ${PEER} and ${THIRD}`, id),
+      undefined as never,
+    );
+    expect(one.data?.xrplCache, "setup: the first turn must be cacheable").toBe("miss");
+    expect(one.text ?? "", "setup: turn one names B first").toMatch(
+      new RegExp(`^ {2}other_address_not_retrieved\\[0\\]: ${PEER}\\.`, "m"),
+    );
+    const afterFirst = fetchImpl.mock.calls.length;
+
+    const two = await provider.get(
+      runtime,
+      msg(`${ADDR} and ${THIRD} and ${PEER}`, id),
+      undefined as never,
+    );
+    expect(two.data?.xrplCache, "a different ORDER is a different report").toBe("miss");
+    expect(
+      fetchImpl.mock.calls.length,
+      "and the second turn really did its own lookup",
+    ).toBeGreaterThan(afterFirst);
+    expect(two.text ?? "", "it must name the one ITS message named first").toMatch(
+      new RegExp(`^ {2}other_address_not_retrieved\\[0\\]: ${THIRD}\\.`, "m"),
+    );
+  });
+
+  it("a repeated LATER address does not split the key, because it does not change the report", async () => {
+    // The other direction of the same rule, and it is the one that keeps the
+    // provider's own de-duplication load-bearing now that the renderer
+    // de-duplicates what it PRINTS. "A and B" and "A and B and B" render
+    // identically; if the key does not de-duplicate too, they land on different
+    // entries and the cache silently stops serving a turn whose answer it holds.
+    const fetchImpl = okFetch();
+    const provider = createXrplProvider({ fetchImpl: fetchImpl as never, now: () => 1_000 });
+    const runtime = rt(AGENT_A);
+    const id = randomUUID();
+
+    const one = await provider.get(runtime, msg(`${ADDR} and ${PEER}`, id), undefined as never);
+    expect(one.data?.xrplCache, "setup: the first turn must be cacheable").toBe("miss");
+    const afterFirst = fetchImpl.mock.calls.length;
+
+    const two = await provider.get(
+      runtime,
+      msg(`${ADDR} and ${PEER} and ${PEER}`, id),
+      undefined as never,
+    );
+    expect(two.text, "setup: the two reports must really be identical").toBe(one.text);
+    expect(two.data?.xrplCache, "so they must share one entry").toBe("hit");
+    expect(fetchImpl.mock.calls.length, "and the second must fetch nothing").toBe(afterFirst);
   });
 });
 
